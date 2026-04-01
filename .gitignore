@@ -4,3 +4,5 @@ __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
 .claude/
+nepool-materials/
+nyiso-materials/

@@ -1,0 +1,104 @@
+storage_root: ./nepool-materials
+lookahead_days: 60
+committees:
+- name: Markets Committee
+  short: MC
+  url: https://www.iso-ne.com/committees/markets/markets-committee/calendar
+  active: true
+- name: Participants Committee
+  short: NPC
+  url: https://www.iso-ne.com/committees/participants/participants-committee/calendar
+  active: true
+- name: Reliability Committee
+  short: RC
+  url: https://www.iso-ne.com/committees/reliability/reliability-committee/calendar
+  active: true
+- name: Transmission Committee
+  short: TC
+  url: https://www.iso-ne.com/committees/transmission/transmission-committee/calendar
+  active: true
+- name: Load Forecast Committee
+  short: LFC
+  url: https://www.iso-ne.com/committees/reliability/load-forecast/calendar
+  active: true
+- name: Power Supply Planning Committee
+  short: PSPC
+  url: https://www.iso-ne.com/committees/reliability/power-supply-planning/calendar
+  active: true
+- name: Budget and Finance Subcommittee
+  short: BFS
+  url: https://www.iso-ne.com/committees/participants/budget-finance/calendar
+  active: true
+- name: Planning Advisory Committee
+  short: PAC
+  url: https://www.iso-ne.com/committees/planning/planning-advisory/calendar
+  active: true
+nyiso_storage_root: ./nyiso-materials
+nyiso_lookahead_days: 90
+nyiso_committees:
+- name: Business Issues Committee
+  short: BIC
+  page_url: https://www.nyiso.com/business-issues-committee-bic
+  plid: "40263"
+  portlet_instance: khij
+  year_folders:
+    2026: "56302830"
+    2025: "49138793"
+    2024: "42341197"
+  active: true
+- name: Management Committee
+  short: MC
+  page_url: https://www.nyiso.com/management-committee-mc
+  plid: "40259"
+  portlet_instance: uleo
+  year_folders:
+    2026: "56758886"
+    2025: "49424262"
+  active: true
+- name: Operating Committee
+  short: OC
+  page_url: https://www.nyiso.com/operating-committee-oc
+  plid: "40267"
+  portlet_instance: wvuf
+  year_folders:
+    2026: "56359665"
+    2025: "49178969"
+    2024: "42374113"
+  active: true
+
+agenda_parsing:
+  mode: llm_verify
+  parse_model: claude-haiku-4-5-20251001
+  match_model: claude-haiku-4-5-20251001
+  escalation_model: claude-sonnet-4-6
+
+summarization:
+  models:
+    document: claude-sonnet-4-6
+    rollup: claude-haiku-4-5
+    briefing: claude-opus-4-5
+  max_input_chars: 180000
+  chunk_chars: 60000
+  max_response_tokens: 4096
+  skip_extensions:
+  - .ics
+  - .zip
+  - .xlsx
+  - .csv
+  - .txt
+  skip_filename_patterns:
+  - _actions_letter
+  - _meeting_minutes
+  - _motions_letter
+  - _minutes_
+  - _minutes.
+  images:
+    enabled: true
+    min_size_px: 200
+    max_per_item: 8
+    extract_from:
+    - .pdf
+    - .pptx
+  doc_prompt_path: prompts/doc_summary_prompt.md
+  agenda_item_prompt_path: prompts/agenda_item_prompt.md
+  briefing_prompt_path: prompts/isone_mc_briefing_prompt.md

@@ -1,2 +1,12 @@
 streamlit>=1.56.0
 Authlib>=1.3.2
+requests
+beautifulsoup4
+pyyaml
+playwright
+python-docx
+python-pptx
+anthropic
+pymupdf
+python-dotenv
+psycopg2-binary

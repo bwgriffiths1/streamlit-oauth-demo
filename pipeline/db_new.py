@@ -1,0 +1,873 @@
+"""
+pipeline/db_new.py — Connection pool and CRUD helpers for the redesigned schema.
+
+DATABASE_URL format: postgresql://user:password@host:port/dbname
+Set it in .env for local development.
+"""
+import os
+from contextlib import contextmanager
+
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# Connection pool
+# ---------------------------------------------------------------------------
+
+_pool: psycopg2.pool.SimpleConnectionPool | None = None
+
+
+def _get_pool() -> psycopg2.pool.SimpleConnectionPool:
+    global _pool
+    if _pool is None:
+        url = os.environ.get("DATABASE_URL")
+        if not url:
+            raise EnvironmentError("DATABASE_URL is not set. Add it to .env.")
+        _pool = psycopg2.pool.SimpleConnectionPool(1, 10, dsn=url)
+    return _pool
+
+
+@contextmanager
+def _conn():
+    """Yield a psycopg2 connection, returning it to the pool on exit."""
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
+
+
+def _cursor(conn):
+    return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+
+# ---------------------------------------------------------------------------
+# Venues
+# ---------------------------------------------------------------------------
+
+def get_venues(active_only: bool = True) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            sql = "SELECT * FROM venues"
+            if active_only:
+                sql += " WHERE active = true"
+            sql += " ORDER BY short_name"
+            cur.execute(sql)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_venue(short_name: str) -> dict | None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("SELECT * FROM venues WHERE short_name = %s", (short_name,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Meeting types
+# ---------------------------------------------------------------------------
+
+def get_meeting_types(venue_short_name: str | None = None,
+                      active_only: bool = True) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            sql = """
+                SELECT mt.*, v.short_name AS venue_short_name, v.name AS venue_name
+                FROM meeting_types mt
+                JOIN venues v ON v.id = mt.venue_id
+                WHERE 1=1
+            """
+            params: list = []
+            if active_only:
+                sql += " AND mt.active = true"
+            if venue_short_name:
+                sql += " AND v.short_name = %s"
+                params.append(venue_short_name)
+            sql += " ORDER BY v.short_name, mt.short_name"
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Meetings
+# ---------------------------------------------------------------------------
+
+def upsert_meeting(
+    meeting_type_id: int,
+    meeting_date: str,           # ISO date string "YYYY-MM-DD"
+    external_id: str | None = None,
+    title: str | None = None,
+    meeting_number: str | None = None,
+    end_date: str | None = None,
+    location: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """
+    Insert or update a meeting row.
+    Conflict key: (meeting_type_id, external_id).
+    Returns the full row as a dict.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO meetings
+                    (meeting_type_id, external_id, title, meeting_date, end_date,
+                     meeting_number, location, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (meeting_type_id, external_id)
+                DO UPDATE SET
+                    title          = EXCLUDED.title,
+                    meeting_date   = EXCLUDED.meeting_date,
+                    end_date       = EXCLUDED.end_date,
+                    meeting_number = EXCLUDED.meeting_number,
+                    location       = EXCLUDED.location,
+                    notes          = EXCLUDED.notes
+                RETURNING *
+            """, (meeting_type_id, external_id, title, meeting_date, end_date,
+                  meeting_number, location, notes))
+            return dict(cur.fetchone())
+
+
+def create_meeting_type(venue_id: int, name: str, short_name: str,
+                        description: str | None = None) -> dict:
+    """Create a new meeting type (committee) for a venue."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO meeting_types (venue_id, name, short_name, description)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (venue_id, short_name)
+                DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description
+                RETURNING *
+            """, (venue_id, name, short_name, description))
+            return dict(cur.fetchone())
+
+
+def get_meeting(meeting_id: int) -> dict | None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT m.*,
+                       mt.short_name  AS type_short,
+                       mt.name        AS type_name,
+                       v.short_name   AS venue_short,
+                       v.name         AS venue_name
+                FROM meetings m
+                JOIN meeting_types mt ON mt.id = m.meeting_type_id
+                JOIN venues v         ON v.id  = mt.venue_id
+                WHERE m.id = %s
+            """, (meeting_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def list_meetings(
+    venue_short: str | None = None,
+    type_short: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            sql = """
+                SELECT m.*,
+                       mt.short_name AS type_short,
+                       mt.name       AS type_name,
+                       v.short_name  AS venue_short
+                FROM meetings m
+                JOIN meeting_types mt ON mt.id = m.meeting_type_id
+                JOIN venues v         ON v.id  = mt.venue_id
+                WHERE 1=1
+            """
+            params: list = []
+            if venue_short:
+                sql += " AND v.short_name = %s"
+                params.append(venue_short)
+            if type_short:
+                sql += " AND mt.short_name = %s"
+                params.append(type_short)
+            sql += " ORDER BY m.meeting_date DESC LIMIT %s"
+            params.append(limit)
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def list_meetings_overview(
+    venue_short: str | None = None,
+    past_days: int = 90,
+    future_days: int = 90,
+) -> list[dict]:
+    """
+    Return meetings within [today - past_days, today + future_days] with
+    derived status counts used to compute the single status pill.
+
+    Each row includes: id, meeting_date, end_date, type_short, type_name,
+    venue_short, title, meeting_number, location, external_id,
+    meeting_status, doc_count, has_summary, has_manual.
+    Ordered by meeting_date ASC.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            sql = """
+                SELECT
+                    m.id,
+                    m.meeting_date,
+                    m.end_date,
+                    m.title,
+                    m.meeting_number,
+                    m.location,
+                    m.external_id,
+                    m.status                AS meeting_status,
+                    mt.short_name           AS type_short,
+                    mt.name                 AS type_name,
+                    v.short_name            AS venue_short,
+                    COUNT(DISTINCT d.id)    AS doc_count,
+                    COALESCE(MAX(CASE
+                        WHEN sv.status IN ('draft','approved') AND sv.is_manual = false
+                        THEN 1 ELSE 0 END), 0) AS has_summary,
+                    COALESCE(MAX(CASE
+                        WHEN sv.is_manual = true
+                        THEN 1 ELSE 0 END), 0) AS has_manual
+                FROM meetings m
+                JOIN meeting_types mt ON mt.id = m.meeting_type_id
+                JOIN venues v         ON v.id  = mt.venue_id
+                LEFT JOIN documents d
+                       ON d.meeting_id = m.id
+                LEFT JOIN summary_versions sv
+                       ON sv.entity_type = 'meeting'
+                      AND sv.entity_id   = m.id
+                      AND sv.status     != 'superseded'
+                      AND sv.created_by != 'autosave'
+                WHERE m.meeting_date BETWEEN (CURRENT_DATE - %s::int) AND (CURRENT_DATE + %s::int)
+            """
+            params: list = [past_days, future_days]
+            if venue_short:
+                sql += " AND v.short_name = %s"
+                params.append(venue_short)
+            sql += """
+                GROUP BY m.id, mt.short_name, mt.name, v.short_name
+                ORDER BY m.meeting_date ASC
+            """
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def set_meeting_status(meeting_id: int, status: str) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "UPDATE meetings SET status = %s WHERE id = %s",
+                (status, meeting_id),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Agenda items
+# ---------------------------------------------------------------------------
+
+def insert_agenda_item(
+    meeting_id: int,
+    title: str,
+    seq: int,
+    depth: int = 0,
+    parent_id: int | None = None,
+    item_id: str | None = None,
+    prefix: str | None = None,
+    auto_sub: bool = False,
+    presenter: str | None = None,
+    org: str | None = None,
+    vote_status: str | None = None,
+    wmpp_id: str | None = None,
+    time_slot: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO agenda_items
+                    (meeting_id, parent_id, item_id, prefix, title,
+                     depth, seq, auto_sub, presenter, org, vote_status,
+                     wmpp_id, time_slot, notes)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING *
+            """, (meeting_id, parent_id, item_id, prefix, title,
+                  depth, seq, auto_sub, presenter, org, vote_status,
+                  wmpp_id, time_slot, notes))
+            return dict(cur.fetchone())
+
+
+def get_agenda_items(meeting_id: int) -> list[dict]:
+    """Return all agenda items for a meeting in original parse order (seq)."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM agenda_items
+                WHERE meeting_id = %s
+                ORDER BY seq
+            """, (meeting_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def clear_agenda_for_meeting(meeting_id: int) -> None:
+    """
+    Delete all agenda items (and their summaries/tags) for a meeting,
+    so the meeting can be cleanly re-ingested.
+    item_documents cascade automatically from agenda_items.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            # Polymorphic rows that reference agenda_items by ID
+            cur.execute("""
+                DELETE FROM entity_tags
+                WHERE entity_type = 'agenda_item'
+                  AND entity_id IN (
+                      SELECT id FROM agenda_items WHERE meeting_id = %s
+                  )
+            """, (meeting_id,))
+            cur.execute("""
+                DELETE FROM summary_versions
+                WHERE entity_type = 'agenda_item'
+                  AND entity_id IN (
+                      SELECT id FROM agenda_items WHERE meeting_id = %s
+                  )
+            """, (meeting_id,))
+            cur.execute("""
+                DELETE FROM summary_versions
+                WHERE entity_type = 'meeting' AND entity_id = %s
+            """, (meeting_id,))
+            # Cascade removes item_documents
+            cur.execute(
+                "DELETE FROM agenda_items WHERE meeting_id = %s",
+                (meeting_id,),
+            )
+
+
+def update_agenda_item(item_id: int, **fields) -> None:
+    """Update editable metadata fields on an agenda item."""
+    allowed = {"title", "presenter", "org", "vote_status", "wmpp_id", "time_slot", "notes"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    values = list(updates.values()) + [item_id]
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(f"UPDATE agenda_items SET {set_clause} WHERE id = %s", values)
+
+
+def save_manual_summary(entity_type: str, entity_id: int,
+                        one_line: str | None, detailed: str | None,
+                        created_by: str = "user") -> dict:
+    """
+    Save a manually-written summary as a new approved version.
+    Any previously approved version is superseded automatically.
+    """
+    row = create_summary_version(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        one_line=one_line or None,
+        detailed=detailed or None,
+        model_id=None,
+        is_manual=True,
+        status="approved",
+        created_by=created_by,
+    )
+    # Supersede all other non-stub versions for this entity
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                UPDATE summary_versions
+                SET status = 'superseded'
+                WHERE entity_type = %s AND entity_id = %s
+                  AND id != %s AND status NOT IN ('stub', 'superseded')
+            """, (entity_type, entity_id, row["id"]))
+    return row
+
+
+def autosave_summary(entity_type: str, entity_id: int,
+                     detailed: str, one_line: str | None = None) -> None:
+    """
+    Write an autosave draft for an entity.
+    Replaces any previous autosave row so at most one autosave exists per entity.
+    Does NOT supersede AI-generated drafts or approved versions.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                DELETE FROM summary_versions
+                WHERE entity_type = %s AND entity_id = %s AND created_by = 'autosave'
+            """, (entity_type, entity_id))
+    create_summary_version(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        detailed=detailed,
+        one_line=one_line,
+        model_id=None,
+        is_manual=True,
+        status="draft",
+        created_by="autosave",
+    )
+
+
+def get_autosave(entity_type: str, entity_id: int) -> dict | None:
+    """Return the autosave draft for an entity, if one exists."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM summary_versions
+                WHERE entity_type = %s AND entity_id = %s AND created_by = 'autosave'
+                LIMIT 1
+            """, (entity_type, entity_id))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def clear_autosave(entity_type: str, entity_id: int) -> None:
+    """Remove autosave rows for an entity (called after formal save)."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                DELETE FROM summary_versions
+                WHERE entity_type = %s AND entity_id = %s AND created_by = 'autosave'
+            """, (entity_type, entity_id))
+
+
+def get_agenda_item(item_id: int) -> dict | None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("SELECT * FROM agenda_items WHERE id = %s", (item_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Documents
+# ---------------------------------------------------------------------------
+
+def upsert_document(
+    meeting_id: int,
+    filename: str,
+    file_type: str | None = None,
+    source_url: str | None = None,
+    file_hash: str | None = None,
+    ceii_skipped: bool = False,
+) -> dict:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO documents
+                    (meeting_id, filename, file_type, source_url, file_hash, ceii_skipped)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (meeting_id, filename)
+                DO UPDATE SET
+                    file_type    = EXCLUDED.file_type,
+                    source_url   = EXCLUDED.source_url,
+                    file_hash    = EXCLUDED.file_hash,
+                    ceii_skipped = EXCLUDED.ceii_skipped
+                RETURNING *
+            """, (meeting_id, filename, file_type, source_url, file_hash, ceii_skipped))
+            return dict(cur.fetchone())
+
+
+def set_document_raw_content(document_id: int, raw_content: str) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "UPDATE documents SET raw_content = %s WHERE id = %s",
+                (raw_content, document_id),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Document images
+# ---------------------------------------------------------------------------
+
+def insert_document_image(
+    document_id: int,
+    filename: str,
+    page_or_slide: int,
+    img_index: int = 0,
+    width: int | None = None,
+    height: int | None = None,
+    file_path: str | None = None,
+    image_b64: str | None = None,
+    description: str | None = None,
+) -> dict:
+    """Insert or update an extracted image record."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO document_images
+                    (document_id, filename, page_or_slide, img_index,
+                     width, height, file_path, image_b64, description)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (document_id, page_or_slide, img_index)
+                DO UPDATE SET
+                    filename  = EXCLUDED.filename,
+                    width     = EXCLUDED.width,
+                    height    = EXCLUDED.height,
+                    file_path = EXCLUDED.file_path,
+                    image_b64 = EXCLUDED.image_b64,
+                    description = COALESCE(EXCLUDED.description, document_images.description)
+                RETURNING *
+            """, (document_id, filename, page_or_slide, img_index,
+                  width, height, file_path, image_b64, description))
+            return dict(cur.fetchone())
+
+
+def get_images_for_document(document_id: int, min_size: int = 0) -> list[dict]:
+    """Return images for a document, optionally filtered by minimum dimension."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM document_images
+                WHERE document_id = %s
+                  AND (width  >= %s OR width  IS NULL)
+                  AND (height >= %s OR height IS NULL)
+                ORDER BY page_or_slide, img_index
+            """, (document_id, min_size, min_size))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_images_for_item(item_id: int, min_size: int = 0) -> list[dict]:
+    """Return images for all documents assigned to an agenda item."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT di.*, d.filename AS doc_filename
+                FROM document_images di
+                JOIN item_documents id ON id.document_id = di.document_id
+                JOIN documents d       ON d.id = di.document_id
+                WHERE id.item_id = %s
+                  AND (di.width  >= %s OR di.width  IS NULL)
+                  AND (di.height >= %s OR di.height IS NULL)
+                ORDER BY di.document_id, di.page_or_slide, di.img_index
+            """, (item_id, min_size, min_size))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def set_image_description(image_id: int, description: str) -> None:
+    """Update the Claude-generated description for an image."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "UPDATE document_images SET description = %s WHERE id = %s",
+                (description, image_id),
+            )
+
+
+def get_images_by_ids(image_ids: list[int]) -> list[dict]:
+    """Fetch image records by a list of IDs (batch query)."""
+    if not image_ids:
+        return []
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "SELECT * FROM document_images WHERE id = ANY(%s) ORDER BY id",
+                (image_ids,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def count_images_for_document(document_id: int) -> int:
+    """Return the number of extracted images for a document."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM document_images WHERE document_id = %s",
+                (document_id,),
+            )
+            return cur.fetchone()["cnt"]
+
+
+def get_documents_for_meeting(meeting_id: int) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "SELECT * FROM documents WHERE meeting_id = %s ORDER BY filename",
+                (meeting_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Item–document assignments
+# ---------------------------------------------------------------------------
+
+def assign_document_to_item(item_id: int, document_id: int) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO item_documents (item_id, document_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (item_id, document_id))
+
+
+def reassign_document(document_id: int, new_item_id: int, meeting_id: int) -> None:
+    """
+    Move a document to a different agenda item within the same meeting.
+    Removes all existing item_documents rows for this document (within this
+    meeting) and inserts a fresh one pointing to new_item_id.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                DELETE FROM item_documents
+                WHERE document_id = %s
+                  AND item_id IN (
+                      SELECT id FROM agenda_items WHERE meeting_id = %s
+                  )
+            """, (document_id, meeting_id))
+            cur.execute("""
+                INSERT INTO item_documents (item_id, document_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (new_item_id, document_id))
+
+
+def unassign_document(document_id: int, meeting_id: int) -> None:
+    """Remove all item assignments for a document within a meeting."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                DELETE FROM item_documents
+                WHERE document_id = %s
+                  AND item_id IN (
+                      SELECT id FROM agenda_items WHERE meeting_id = %s
+                  )
+            """, (document_id, meeting_id))
+
+
+def get_unassigned_documents(meeting_id: int) -> list[dict]:
+    """Return unassigned, non-ignored documents for this meeting."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT d.* FROM documents d
+                WHERE d.meeting_id = %s
+                  AND d.ignored = false
+                  AND NOT EXISTS (
+                      SELECT 1 FROM item_documents id2
+                      WHERE id2.document_id = d.id
+                  )
+                ORDER BY d.filename
+            """, (meeting_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_ignored_documents(meeting_id: int) -> list[dict]:
+    """Return documents explicitly marked as ignored for this meeting."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM documents
+                WHERE meeting_id = %s AND ignored = true
+                ORDER BY filename
+            """, (meeting_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def set_document_ignored(document_id: int, ignored: bool) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "UPDATE documents SET ignored = %s WHERE id = %s",
+                (ignored, document_id),
+            )
+
+
+def get_documents_for_item(item_id: int) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT d.* FROM documents d
+                JOIN item_documents id ON id.document_id = d.id
+                WHERE id.item_id = %s
+                ORDER BY d.filename
+            """, (item_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+
+def upsert_tag(name: str, tag_type: str = "custom",
+               description: str | None = None) -> dict:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO tags (name, tag_type, description)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (name)
+                DO UPDATE SET tag_type = EXCLUDED.tag_type,
+                              description = COALESCE(EXCLUDED.description, tags.description)
+                RETURNING *
+            """, (name, tag_type, description))
+            return dict(cur.fetchone())
+
+
+def tag_entity(tag_id: int, entity_type: str, entity_id: int) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO entity_tags (tag_id, entity_type, entity_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (tag_id, entity_type, entity_id))
+
+
+def untag_entity(tag_id: int, entity_type: str, entity_id: int) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                DELETE FROM entity_tags
+                WHERE tag_id = %s AND entity_type = %s AND entity_id = %s
+            """, (tag_id, entity_type, entity_id))
+
+
+def get_tags_for_entity(entity_type: str, entity_id: int) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT t.* FROM tags t
+                JOIN entity_tags et ON et.tag_id = t.id
+                WHERE et.entity_type = %s AND et.entity_id = %s
+                ORDER BY t.tag_type, t.name
+            """, (entity_type, entity_id))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_entities_for_tag(tag_name: str,
+                          entity_type: str | None = None) -> list[dict]:
+    """Return all (entity_type, entity_id) rows for a given tag name."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            sql = """
+                SELECT et.entity_type, et.entity_id, et.created_at
+                FROM entity_tags et
+                JOIN tags t ON t.id = et.tag_id
+                WHERE t.name = %s
+            """
+            params: list = [tag_name]
+            if entity_type:
+                sql += " AND et.entity_type = %s"
+                params.append(entity_type)
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Summary versions
+# ---------------------------------------------------------------------------
+
+def _next_version(cur, entity_type: str, entity_id: int) -> int:
+    cur.execute("""
+        SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+        FROM summary_versions
+        WHERE entity_type = %s AND entity_id = %s
+    """, (entity_type, entity_id))
+    return cur.fetchone()["next_version"]
+
+
+def create_summary_version(
+    entity_type: str,
+    entity_id: int,
+    one_line: str | None = None,
+    detailed: str | None = None,
+    model_id: str | None = None,
+    is_manual: bool = False,
+    status: str = "stub",
+    created_by: str = "system",
+) -> dict:
+    """
+    Insert a new summary version for an entity.
+    Version number is auto-incremented per (entity_type, entity_id).
+    Returns the new row as a dict.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            version = _next_version(cur, entity_type, entity_id)
+            cur.execute("""
+                INSERT INTO summary_versions
+                    (entity_type, entity_id, version, one_line, detailed,
+                     model_id, is_manual, status, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (entity_type, entity_id, version, one_line, detailed,
+                  model_id, is_manual, status, created_by))
+            return dict(cur.fetchone())
+
+
+def get_current_summary(entity_type: str, entity_id: int) -> dict | None:
+    """
+    Return the best available summary version for an entity:
+    prefer 'approved', else 'draft', else highest version number.
+    """
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM summary_versions
+                WHERE entity_type = %s AND entity_id = %s
+                ORDER BY
+                    CASE status
+                        WHEN 'approved' THEN 0
+                        WHEN 'draft'    THEN 1
+                        WHEN 'stub'     THEN 2
+                        ELSE 3
+                    END,
+                    version DESC
+                LIMIT 1
+            """, (entity_type, entity_id))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def list_summary_versions(entity_type: str, entity_id: int) -> list[dict]:
+    """Return all summary versions for an entity, newest first."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM summary_versions
+                WHERE entity_type = %s AND entity_id = %s
+                ORDER BY version DESC
+            """, (entity_type, entity_id))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def approve_summary_version(summary_id: int) -> None:
+    """Mark one version as approved and supersede all others for that entity."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            # Get entity info for this version
+            cur.execute(
+                "SELECT entity_type, entity_id FROM summary_versions WHERE id = %s",
+                (summary_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return
+            entity_type, entity_id = row["entity_type"], row["entity_id"]
+
+            # Supersede all other non-stub versions
+            cur.execute("""
+                UPDATE summary_versions
+                SET status = 'superseded'
+                WHERE entity_type = %s AND entity_id = %s
+                  AND id != %s AND status != 'stub'
+            """, (entity_type, entity_id, summary_id))
+
+            cur.execute(
+                "UPDATE summary_versions SET status = 'approved' WHERE id = %s",
+                (summary_id,),
+            )

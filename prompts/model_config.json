@@ -1,0 +1,8 @@
+{
+  "document_model": "claude-sonnet-4-6",
+  "item_model": "claude-haiku-4-5-20251001",
+  "meeting_model": "claude-opus-4-6",
+  "document_max_tokens": 32768,
+  "item_max_tokens": 32768,
+  "meeting_max_tokens": 32768
+}

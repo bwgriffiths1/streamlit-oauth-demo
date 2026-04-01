@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+echo "PORT=${PORT:-not set}"
+echo "DATABASE_URL=${DATABASE_URL:+set (hidden)}"
+
 # Generate secrets.toml from environment variables (for Railway deployment)
 if [ -n "$AUTH_CLIENT_ID" ]; then
     mkdir -p .streamlit
@@ -12,7 +15,30 @@ client_id = "$AUTH_CLIENT_ID"
 client_secret = "$AUTH_CLIENT_SECRET"
 server_metadata_url = "$AUTH_SERVER_METADATA_URL"
 EOF
+    echo "Generated .streamlit/secrets.toml from env vars."
 fi
+
+# Database schema initialization
+if [ -z "$DATABASE_URL" ]; then
+    echo "ERROR: DATABASE_URL is not set. Add a Postgres plugin on Railway."
+    exit 1
+fi
+
+python - <<'PYEOF'
+import psycopg2, os, sys
+try:
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    cur = conn.cursor()
+    with open("pipeline/schema.sql") as f:
+        cur.execute(f.read())
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("Schema initialized OK.")
+except Exception as e:
+    print(f"Schema init failed: {e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
 
 exec streamlit run app.py \
     --server.port "${PORT:-8501}" \
