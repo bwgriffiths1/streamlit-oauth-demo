@@ -111,14 +111,17 @@ if selected_id is not None:
 st.divider()
 with st.expander("🔄 Refresh Upcoming Meetings"):
     st.write(
-        "Scrapes ISO-NE committee calendars and runs full ingest "
+        "Scrapes ISO-NE and NYISO committee calendars and runs full ingest "
         "(document list + agenda parsing) for any new meetings found. "
         "Existing meetings are not overwritten."
     )
     if st.button("Run Refresh"):
         import yaml
+        from datetime import datetime
         from pipeline.scraper import scrape_calendar, fetch_event_docs
         from pipeline.ingest import ingest_meeting
+        from pipeline.nyiso_scraper import fetch_meetings as nyiso_fetch_meetings
+        from pipeline.nyiso_ingest import ingest_nyiso_meeting
 
         try:
             with open("config.yaml") as fh:
@@ -127,19 +130,20 @@ with st.expander("🔄 Refresh Upcoming Meetings"):
             st.error("config.yaml not found — cannot scrape.")
             st.stop()
 
-        lookahead = config.get("lookahead_days", 60)
         status_area = st.empty()
         total_new = 0
         errors = []
 
+        # --- ISO-NE -----------------------------------------------------------
+        lookahead = config.get("lookahead_days", 60)
         for committee in config.get("committees", []):
             if not committee.get("active", True):
                 continue
-            status_area.info(f"Scraping {committee['name']}…")
+            status_area.info(f"Scraping ISO-NE {committee['name']}…")
             try:
                 found = scrape_calendar(committee, lookahead)
             except Exception as exc:
-                errors.append(f"{committee['name']}: calendar scrape failed — {exc}")
+                errors.append(f"ISO-NE {committee['name']}: calendar scrape failed — {exc}")
                 continue
 
             for mtg in found:
@@ -154,7 +158,36 @@ with st.expander("🔄 Refresh Upcoming Meetings"):
                         total_new += 1
                 except Exception as exc:
                     errors.append(
-                        f"{committee['name']} / event {mtg.get('primary_event_id')}: {exc}"
+                        f"ISO-NE {committee['name']} / event {mtg.get('primary_event_id')}: {exc}"
+                    )
+
+        # --- NYISO -------------------------------------------------------------
+        nyiso_lookahead = config.get("nyiso_lookahead_days", 90)
+        current_year = datetime.now().year
+        for committee in config.get("nyiso_committees", []):
+            if not committee.get("active", True):
+                continue
+            status_area.info(f"Scraping NYISO {committee['name']}…")
+            try:
+                found = nyiso_fetch_meetings(committee, current_year, nyiso_lookahead)
+            except Exception as exc:
+                errors.append(f"NYISO {committee['name']}: scrape failed — {exc}")
+                continue
+
+            for mtg in found:
+                try:
+                    result = ingest_nyiso_meeting(
+                        committee,
+                        meeting_id=mtg["meeting_id"],
+                        meeting_date=mtg["date"],
+                        venue_short="NYISO",
+                        overwrite=False,
+                    )
+                    if result:
+                        total_new += 1
+                except Exception as exc:
+                    errors.append(
+                        f"NYISO {committee['name']} / {mtg['date']}: {exc}"
                     )
 
         if errors:
