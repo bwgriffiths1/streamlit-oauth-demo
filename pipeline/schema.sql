@@ -201,3 +201,19 @@ INSERT INTO meeting_types (venue_id, name, short_name) VALUES
     ((SELECT id FROM venues WHERE short_name = 'NYISO'), 'Management Committee',      'MC'),
     ((SELECT id FROM venues WHERE short_name = 'NYISO'), 'Operating Committee',       'OC')
 ON CONFLICT (venue_id, short_name) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 10. App users  — local authentication accounts
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app_users (
+    id            SERIAL PRIMARY KEY,
+    email         TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL,
+    password_hash TEXT,                          -- NULL for Google-only users
+    auth_provider TEXT NOT NULL DEFAULT 'local', -- 'local' | 'google'
+    is_active     BOOLEAN NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users (email);

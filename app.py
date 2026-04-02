@@ -1,5 +1,5 @@
 """
-app.py — Meeting Summaries with Google OIDC Authentication
+app.py — Meeting Summaries with Google OIDC + Local DB Authentication
 """
 import os
 import streamlit as st
@@ -11,31 +11,62 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from pipeline.auth import (
+    is_authenticated, get_current_user,
+    authenticate_user, login_local_user, logout_local_user,
+)
+
 # --- Landing page (unauthenticated) ---
-if not st.user.is_logged_in:
+if not is_authenticated():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.title("Meeting Summaries")
         st.markdown(
             "ISO-NE and NYISO meeting summaries powered by AI. "
-            "Log in with your Google account to continue."
+            "Log in to continue."
         )
         st.divider()
-        if st.button("Log in with Google", type="primary", width="stretch"):
-            st.login()
+
+        tab_google, tab_local = st.tabs(["Google", "Email & Password"])
+
+        with tab_google:
+            st.markdown("Sign in with your Google account.")
+            if st.button("Log in with Google", type="primary",
+                         use_container_width=True):
+                st.login()
+
+        with tab_local:
+            with st.form("local_login_form"):
+                email = st.text_input("Email")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Log in", type="primary",
+                                                  use_container_width=True)
+                if submitted:
+                    if email and password:
+                        user = authenticate_user(email, password)
+                        if user:
+                            login_local_user(user)
+                            st.rerun()
+                        else:
+                            st.error("Invalid email or password.")
+                    else:
+                        st.warning("Please enter both email and password.")
     st.stop()
 
 # --- Authenticated: sidebar user info + logout ---
-user_name = st.user.get("name", "User")
-user_email = st.user.get("email", "")
+current_user = get_current_user()
 
 with st.sidebar:
-    st.markdown(f"**{user_name}**")
-    if user_email:
-        st.caption(user_email)
+    st.markdown(f"**{current_user['name']}**")
+    if current_user["email"]:
+        st.caption(current_user["email"])
     st.divider()
     if st.button("Log out", width="stretch"):
-        st.logout()
+        if current_user["provider"] == "google":
+            st.logout()
+        else:
+            logout_local_user()
+            st.rerun()
 
 # --- DB bootstrap ---
 from dotenv import load_dotenv
