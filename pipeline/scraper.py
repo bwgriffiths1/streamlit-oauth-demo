@@ -198,10 +198,10 @@ def _parse_date(text: str) -> Optional[date]:
     Returns a date object, or None on failure.
     """
     text = text.strip()
+    # Take the first line, then strip any trailing time portion (e.g. "10:00AM")
+    date_part = re.split(r"\s+\d{1,2}:\d{2}", text.split("\n")[0])[0].strip().rstrip(",")
     for fmt in ("%B %d, %Y", "%b %d, %Y"):
         try:
-            # Take only the first line / first comma-separated date portion
-            date_part = text.split("\n")[0].split("9:")[0].strip().rstrip(",")
             return datetime.strptime(date_part, fmt).date()
         except ValueError:
             continue
