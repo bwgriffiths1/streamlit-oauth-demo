@@ -66,6 +66,17 @@ nyiso_committees:
     2024: "42374113"
   active: true
 
+npc_combined:
+  # Section types to mark as ignored (stored but not summarized)
+  skip_section_types:
+  - minutes
+  - notice
+  # Combined PDF selection priority (first found wins)
+  pdf_priority:
+  - composite
+  - supplemental
+  - initial
+
 agenda_parsing:
   mode: llm_verify
   parse_model: claude-haiku-4-5-20251001

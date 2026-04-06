@@ -192,6 +192,18 @@ def ingest_meeting(
     doc_list: [{filename, url}, ...]
     """
     committee_short = meeting_dict.get("committee_short", "")
+
+    # Check for NPC combined PDF (initial/supplemental/composite) and delegate
+    if committee_short.upper() == "NPC":
+        from pipeline.npc_ingest import find_combined_pdf
+        if find_combined_pdf(doc_list):
+            from pipeline.npc_ingest import ingest_npc_meeting
+            logger.info("NPC combined PDF detected — delegating to npc_ingest")
+            return ingest_npc_meeting(
+                meeting_dict, doc_list, config,
+                venue_short=venue_short, overwrite=overwrite, session=session,
+            )
+
     event_id = meeting_dict.get("primary_event_id")
     dates = meeting_dict.get("dates", [])
     meeting_date = str(dates[0]) if dates else None
