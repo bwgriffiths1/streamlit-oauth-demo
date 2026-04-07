@@ -222,6 +222,9 @@ with tab1:
         meeting_date = st.date_input("Start date", key="add_date")
 
     with col_end:
+        # Ensure end_date is never before start date (avoids Streamlit min_value error)
+        if st.session_state.get("add_end_date") and meeting_date and st.session_state["add_end_date"] < meeting_date:
+            st.session_state["add_end_date"] = meeting_date
         end_date = st.date_input(
             "End date",
             min_value=meeting_date,
