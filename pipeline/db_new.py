@@ -599,6 +599,17 @@ def get_documents_for_meeting(meeting_id: int) -> list[dict]:
             return [dict(r) for r in cur.fetchall()]
 
 
+def get_existing_filenames(meeting_id: int) -> set[str]:
+    """Return the set of filenames already stored for this meeting."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "SELECT filename FROM documents WHERE meeting_id = %s",
+                (meeting_id,),
+            )
+            return {r["filename"] for r in cur.fetchall()}
+
+
 # ---------------------------------------------------------------------------
 # Item–document assignments
 # ---------------------------------------------------------------------------

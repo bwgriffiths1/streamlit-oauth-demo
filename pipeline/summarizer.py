@@ -1175,6 +1175,7 @@ def run_meeting_summarization(
     start_level: int = 1,
     extract_images: bool | None = None,
     briefing_style: str = "standard",
+    item_ids: set[int] | None = None,
 ) -> dict:
     """
     Run the three-level summarization pipeline for a meeting.
@@ -1185,6 +1186,11 @@ def run_meeting_summarization(
         3 = briefing only
 
     extract_images: None = use config.yaml default, True/False = override.
+
+    item_ids: if provided, only process these agenda item IDs at Level 1,
+    and only re-roll-up their parents at Level 2. Level 3 briefing is
+    always re-run when item_ids is set (since content changed).
+    When None, all items are processed (default behavior).
 
     Returns a dict with counts:
         {"level1": int, "level2": int, "level3": bool, "errors": list[str]}
@@ -1293,8 +1299,15 @@ def run_meeting_summarization(
     if start_level > 1:
         _progress("Level 1: skipped (start_level > 1).")
     else:
-        _progress("Level 1: summarising document groups for leaf agenda items…")
+        if item_ids:
+            _progress(f"Level 1: summarising {len(item_ids)} affected agenda item(s)…")
+        else:
+            _progress("Level 1: summarising document groups for leaf agenda items…")
         for item in all_items:
+            # If item_ids filter is set, skip items not in the set
+            if item_ids is not None and item["id"] not in item_ids:
+                continue
+
             docs = db.get_documents_for_item(item["id"])
             has_docs = any(
                 not d.get("ceii_skipped") and not d.get("ignored")
@@ -1339,7 +1352,21 @@ def run_meeting_summarization(
     parent_items = [it for it in all_items if children_of.get(it["id"])]
     parent_items_sorted = sorted(parent_items, key=lambda x: -x.get("depth", 0))
 
+    # When item_ids filter is set, only re-roll-up parents whose children
+    # include affected items
+    affected_parent_ids: set[int] | None = None
+    if item_ids is not None:
+        affected_parent_ids = set()
+        for parent in parent_items_sorted:
+            children = children_of.get(parent["id"], [])
+            if any(c["id"] in item_ids for c in children):
+                affected_parent_ids.add(parent["id"])
+
     for item in parent_items_sorted:
+        # Skip parents not affected by the item_ids filter
+        if affected_parent_ids is not None and item["id"] not in affected_parent_ids:
+            continue
+
         children = children_of.get(item["id"], [])
         child_summaries = []
         for child in children:
@@ -1377,8 +1404,10 @@ def run_meeting_summarization(
 
     # ── Level 3: meeting briefing ─────────────────────────────────────────────
     _progress("Level 3: generating meeting briefing…")
+    # When item_ids is set, always re-run briefing (affected content changed)
+    l3_force = force_rerun or (item_ids is not None)
     existing_mtg = db.get_current_summary("meeting", meeting_id)
-    if (not force_rerun
+    if (not l3_force
             and existing_mtg
             and existing_mtg.get("status") not in ("stub", None)
             and existing_mtg.get("detailed")):

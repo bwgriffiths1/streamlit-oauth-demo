@@ -275,6 +275,92 @@ if agenda_items:
                     status_box.update(label=f"Summarization failed: {exc}", state="error")
                     st.error(str(exc))
 
+# ---------------------------------------------------------------------------
+# Check for new materials
+# ---------------------------------------------------------------------------
+if agenda_items and selected_meeting.get("external_id"):
+    refresh_col, resum_col = st.columns([3, 7])
+    with refresh_col:
+        check_btn = st.button("🔍 Check for New Materials", use_container_width=True,
+                              help="Re-scrape the source to find newly posted documents")
+    if check_btn:
+        from pipeline.refresh import refresh_meeting_documents
+        with st.status("Checking for new materials…", expanded=True) as refresh_box:
+            try:
+                import yaml as _yaml
+                with open("config.yaml") as _fh:
+                    _cfg = _yaml.safe_load(_fh)
+                refresh_result = refresh_meeting_documents(selected_id, _cfg)
+
+                if not refresh_result.has_new:
+                    refresh_box.update(label="No new materials found.", state="complete", expanded=False)
+                else:
+                    n_new = len(refresh_result.new_docs)
+                    n_assigned = sum(1 for d in refresh_result.new_docs if d.get("assigned_to_item"))
+                    n_unassigned = len(refresh_result.unassigned_docs)
+                    n_affected = len(refresh_result.affected_item_ids)
+
+                    st.write(f"**{n_new} new document(s) found** — {n_assigned} assigned, {n_unassigned} unassigned")
+
+                    for d in refresh_result.new_docs:
+                        icon = "✅" if d.get("assigned_to_item") else "❓"
+                        st.write(f"  {icon} `{d['filename']}`")
+
+                    if refresh_result.errors:
+                        for err in refresh_result.errors:
+                            st.warning(err)
+
+                    refresh_box.update(
+                        label=f"Found {n_new} new document(s), {n_affected} agenda item(s) affected.",
+                        state="complete", expanded=True,
+                    )
+
+                    # Offer re-summarization for affected items
+                    if refresh_result.affected_item_ids and api_key_ok:
+                        # Check if any affected items have manual approvals
+                        manual_items = []
+                        for aid in refresh_result.affected_item_ids:
+                            summ = db.get_current_summary("agenda_item", aid)
+                            if summ and summ.get("is_manual") and summ.get("status") == "approved":
+                                manual_items.append(aid)
+                        if manual_items:
+                            st.warning(
+                                f"{len(manual_items)} affected item(s) have manually approved summaries "
+                                f"— these will be skipped unless you force re-run.",
+                                icon="⚠️",
+                            )
+
+                        if st.button("🤖 Re-summarize affected items", type="primary"):
+                            committee_short = selected_meeting.get("type_short", "MC")
+                            with st.status("Re-summarizing affected items…", expanded=True) as resum_box:
+                                def _refresh_progress(msg: str) -> None:
+                                    st.write(msg)
+                                try:
+                                    client = make_client()
+                                    results = run_meeting_summarization(
+                                        meeting_id=selected_id,
+                                        client=client,
+                                        committee_short=committee_short,
+                                        venue_short=selected_meeting.get("venue_short", "ISO-NE"),
+                                        progress_fn=_refresh_progress,
+                                        force_rerun=True,
+                                        item_ids=refresh_result.affected_item_ids,
+                                    )
+                                    n1 = results["level1"]
+                                    n2 = results["level2"]
+                                    n3 = results["level3"]
+                                    resum_box.update(
+                                        label=f"Done — {n1} doc summaries, {n2} rollups, briefing {'✓' if n3 else '—'}.",
+                                        state="complete", expanded=False,
+                                    )
+                                    st.rerun()
+                                except Exception as exc:
+                                    resum_box.update(label=f"Failed: {exc}", state="error")
+                                    st.error(str(exc))
+            except Exception as exc:
+                refresh_box.update(label=f"Refresh failed: {exc}", state="error")
+                st.error(str(exc))
+
 # Meeting summary
 mtg_summary = db.get_current_summary("meeting", selected_id)
 if mtg_summary and (mtg_summary.get("one_line") or mtg_summary.get("detailed")):

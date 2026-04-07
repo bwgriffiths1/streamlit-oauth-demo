@@ -122,6 +122,7 @@ with st.expander("🔄 Refresh Upcoming Meetings"):
         from pipeline.ingest import ingest_meeting
         from pipeline.nyiso_scraper import fetch_meetings as nyiso_fetch_meetings
         from pipeline.nyiso_ingest import ingest_nyiso_meeting
+        from pipeline.refresh import refresh_meeting_documents
 
         try:
             with open("config.yaml") as fh:
@@ -132,7 +133,10 @@ with st.expander("🔄 Refresh Upcoming Meetings"):
 
         status_area = st.empty()
         total_new = 0
+        total_new_docs = 0
         errors = []
+        # Track meetings that already existed (for doc refresh pass)
+        existing_meeting_ids: list[int] = []
 
         # --- ISO-NE -----------------------------------------------------------
         lookahead = config.get("lookahead_days", 60)
@@ -156,6 +160,7 @@ with st.expander("🔄 Refresh Upcoming Meetings"):
                     )
                     if result:
                         total_new += 1
+                        existing_meeting_ids.append(result)
                 except Exception as exc:
                     errors.append(
                         f"ISO-NE {committee['name']} / event {mtg.get('primary_event_id')}: {exc}"
@@ -185,14 +190,30 @@ with st.expander("🔄 Refresh Upcoming Meetings"):
                     )
                     if result:
                         total_new += 1
+                        existing_meeting_ids.append(result)
                 except Exception as exc:
                     errors.append(
                         f"NYISO {committee['name']} / {mtg['date']}: {exc}"
                     )
 
+        # --- Check for new materials on existing meetings ─────────────────────
+        status_area.info("Checking existing meetings for new materials…")
+        for mid in existing_meeting_ids:
+            try:
+                rr = refresh_meeting_documents(mid, config)
+                if rr.has_new:
+                    total_new_docs += len(rr.new_docs)
+                if rr.errors:
+                    errors.extend(rr.errors)
+            except Exception as exc:
+                errors.append(f"Document refresh for meeting {mid}: {exc}")
+
         if errors:
             for msg in errors:
                 st.warning(msg)
 
-        status_area.success(f"Done. {total_new} meeting(s) ingested.")
+        parts = [f"{total_new} meeting(s) ingested"]
+        if total_new_docs:
+            parts.append(f"{total_new_docs} new document(s) found on existing meetings")
+        status_area.success(f"Done. {', '.join(parts)}.")
         st.rerun()
