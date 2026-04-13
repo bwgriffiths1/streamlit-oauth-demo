@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import pipeline.db_new as db
+from pipeline.agenda_parser import item_id_to_prefix
 from pipeline.summarizer import make_client, run_meeting_summarization
 
 st.set_page_config(page_title="Meetings", layout="wide")
@@ -496,7 +497,9 @@ else:
 
                 with st.form(key=f"edit_form_{item['id']}"):
                     st.markdown("**Metadata**")
-                    new_title = st.text_input("Title", value=item.get("title") or "")
+                    title_col, itemid_col = st.columns([3, 1])
+                    new_title = title_col.text_input("Title", value=item.get("title") or "")
+                    new_item_id = itemid_col.text_input("Item ID", value=item.get("item_id") or "")
                     col_a, col_b = st.columns(2)
                     new_presenter = col_a.text_input("Presenter", value=item.get("presenter") or "")
                     new_org       = col_b.text_input("Organisation", value=item.get("org") or "")
@@ -517,14 +520,23 @@ else:
                         height=150,
                     )
 
-                    save_col, cancel_col, _ = st.columns([1, 1, 4])
+                    save_col, cancel_col, del_col, _ = st.columns([1, 1, 1, 3])
                     saved    = save_col.form_submit_button("💾 Save", type="primary", use_container_width=True)
                     cancelled = cancel_col.form_submit_button("Cancel", use_container_width=True)
+                    deleted  = del_col.form_submit_button("🗑 Delete", use_container_width=True)
+
+                if deleted:
+                    db.delete_agenda_item(item["id"])
+                    st.session_state.pop(f"editing_{item['id']}", None)
+                    st.rerun()
 
                 if saved:
+                    new_prefix = item_id_to_prefix(new_item_id) if new_item_id.strip() else None
                     db.update_agenda_item(
                         item["id"],
                         title=new_title,
+                        item_id=new_item_id.strip() or None,
+                        prefix=new_prefix,
                         presenter=new_presenter or None,
                         org=new_org or None,
                         vote_status=new_vote or None,
@@ -558,4 +570,52 @@ else:
                 if st.button("✏️ Edit", key=f"edit_btn_{item['id']}"):
                     st.session_state[f"editing_{item['id']}"] = True
                     st.rerun()
+
+    # ── Add new agenda item ──────────────────────────────────────────────
+    if st.session_state.get("adding_agenda_item", False):
+        with st.form(key="add_agenda_item_form"):
+            st.markdown("#### New Agenda Item")
+            new_title = st.text_input("Title *")
+            new_item_id = st.text_input("Item ID (e.g. 7.1.b)")
+            col_a, col_b = st.columns(2)
+            new_presenter = col_a.text_input("Presenter")
+            new_org = col_b.text_input("Organisation")
+            col_c, col_d, col_e = st.columns(3)
+            new_vote = col_c.text_input("Vote status")
+            new_wmpp = col_d.text_input("WMPP ID")
+            new_time = col_e.text_input("Time slot")
+            new_notes = st.text_area("Notes", height=80)
+
+            save_col, cancel_col, _ = st.columns([1, 1, 4])
+            add_saved = save_col.form_submit_button("💾 Add", type="primary", use_container_width=True)
+            add_cancelled = cancel_col.form_submit_button("Cancel", use_container_width=True)
+
+        if add_saved:
+            if new_title.strip():
+                next_seq = db.get_max_seq(selected_id) + 1
+                db.insert_agenda_item(
+                    meeting_id=selected_id,
+                    title=new_title.strip(),
+                    seq=next_seq,
+                    depth=0,
+                    item_id=new_item_id.strip() or None,
+                    presenter=new_presenter.strip() or None,
+                    org=new_org.strip() or None,
+                    vote_status=new_vote.strip() or None,
+                    wmpp_id=new_wmpp.strip() or None,
+                    time_slot=new_time.strip() or None,
+                    notes=new_notes.strip() or None,
+                )
+                st.session_state["adding_agenda_item"] = False
+                st.rerun()
+            else:
+                st.error("Title is required.")
+
+        if add_cancelled:
+            st.session_state["adding_agenda_item"] = False
+            st.rerun()
+    else:
+        if st.button("➕ Add Agenda Item"):
+            st.session_state["adding_agenda_item"] = True
+            st.rerun()
 

@@ -353,7 +353,7 @@ def clear_agenda_for_meeting(meeting_id: int) -> None:
 
 def update_agenda_item(item_id: int, **fields) -> None:
     """Update editable metadata fields on an agenda item."""
-    allowed = {"title", "presenter", "org", "vote_status", "wmpp_id", "time_slot", "notes"}
+    allowed = {"title", "item_id", "prefix", "presenter", "org", "vote_status", "wmpp_id", "time_slot", "notes"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
@@ -362,6 +362,33 @@ def update_agenda_item(item_id: int, **fields) -> None:
     with _conn() as conn:
         with _cursor(conn) as cur:
             cur.execute(f"UPDATE agenda_items SET {set_clause} WHERE id = %s", values)
+
+
+def delete_agenda_item(item_id: int) -> None:
+    """Delete a single agenda item and its polymorphic summary/tag rows."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "DELETE FROM entity_tags WHERE entity_type = 'agenda_item' AND entity_id = %s",
+                (item_id,),
+            )
+            cur.execute(
+                "DELETE FROM summary_versions WHERE entity_type = 'agenda_item' AND entity_id = %s",
+                (item_id,),
+            )
+            # item_documents rows cascade automatically
+            cur.execute("DELETE FROM agenda_items WHERE id = %s", (item_id,))
+
+
+def get_max_seq(meeting_id: int) -> int:
+    """Return the highest seq value for a meeting's agenda items, or 0."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                "SELECT COALESCE(MAX(seq), 0) FROM agenda_items WHERE meeting_id = %s",
+                (meeting_id,),
+            )
+            return cur.fetchone()[0]
 
 
 def save_manual_summary(entity_type: str, entity_id: int,
