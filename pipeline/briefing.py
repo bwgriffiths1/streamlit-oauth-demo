@@ -166,6 +166,11 @@ def _render_markdown_to_docx(doc: Document, text: str) -> None:
             i += 1
             continue
 
+        if stripped.startswith("#### "):
+            doc.add_heading(stripped[5:].strip(), level=4)
+            i += 1
+            continue
+
         if stripped.startswith("### "):
             doc.add_heading(stripped[4:].strip(), level=3)
             i += 1
@@ -427,6 +432,25 @@ def _render_v2_body_lines(doc: Document, body_lines: list[str]) -> None:
             _add_image_to_doc(doc, int(img_match.group(1)))
             i += 1
             continue
+        # H4 sub-heading: italic blue number, bold italic black title
+        if line.strip().startswith("#### "):
+            h4_text = line.strip()[5:].strip()
+            p = doc.add_paragraph()
+            _v2_spacing(p, before=Pt(12), after=Pt(4))
+            if ":" in h4_text:
+                num, title = h4_text.split(":", 1)
+                r = p.add_run(num.strip())
+                r.font.name = "Calibri"; r.font.size = Pt(10.5)
+                r.italic = True; r.font.color.rgb = _CYAN
+                r = p.add_run(":  " + title.strip())
+                r.font.name = "Calibri"; r.font.size = Pt(10.5)
+                r.bold = True; r.italic = True; r.font.color.rgb = _CHARCOAL
+            else:
+                r = p.add_run(h4_text)
+                r.font.name = "Calibri"; r.font.size = Pt(10.5)
+                r.bold = True; r.italic = True; r.font.color.rgb = _CHARCOAL
+            i += 1
+            continue
         if _is_table_row(line):
             table_lines: list[str] = []
             while i < len(body_lines) and _is_table_row(body_lines[i]):
@@ -526,6 +550,11 @@ def _v2_parse_briefing_md(text: str) -> dict:
                 if cur: data["items"].append(cur); cur = None
                 i += 1; continue
             else: i += 1; continue
+        if s.startswith("#### "):
+            # H4 sub-heading — rendered inline as styled text within the current item
+            if cur is not None:
+                cur["body"].append(s)
+            i += 1; continue
         if s.startswith("### "):
             if cur: data["items"].append(cur)
             h3 = s[4:].strip()
@@ -595,22 +624,30 @@ def build_and_save_briefing_v2(
 
     # Header / footer
     sec.different_first_page_header_footer = True
-    # First-page: empty
+    # First-page: empty header, empty footer
     if sec.first_page_header.paragraphs:
         sec.first_page_header.paragraphs[0].clear()
     if sec.first_page_footer.paragraphs:
         sec.first_page_footer.paragraphs[0].clear()
-    # Running header
+    # Running header — empty (no text, just a bottom border)
     hp = sec.header.paragraphs[0] if sec.header.paragraphs else sec.header.add_paragraph()
-    hp.clear(); _v2_right_tab(hp)
-    _v2_run(hp, f"{data['title']} • Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
-    hp.add_run("\t")
-    _v2_run(hp, data["date"], size=Pt(8.5), color=_GRAY_MID)
-    _v2_pborder(hp, "bottom", 6, _CYAN_HEX, space=4)
-    # Running footer
+    hp.clear()
+    # Running footer — three-column: committee (left), name (center), page (right)
     fp = sec.footer.paragraphs[0] if sec.footer.paragraphs else sec.footer.add_paragraph()
-    fp.clear(); _v2_right_tab(fp)
-    _v2_run(fp, "NEPOOL Markets Committee", size=Pt(8.5), color=_GRAY_MID)
+    fp.clear()
+    # Set up center and right tab stops
+    pPr = fp._p.get_or_add_pPr()
+    tabs = OxmlElement("w:tabs")
+    tab_c = OxmlElement("w:tab")
+    tab_c.set(qn("w:val"), "center"); tab_c.set(qn("w:pos"), str(_CONTENT_W // 2))
+    tabs.append(tab_c)
+    tab_r = OxmlElement("w:tab")
+    tab_r.set(qn("w:val"), "right"); tab_r.set(qn("w:pos"), str(_CONTENT_W))
+    tabs.append(tab_r)
+    pPr.append(tabs)
+    _v2_run(fp, f"{data['title']} • Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
+    fp.add_run("\t")
+    _v2_run(fp, "B.W.Griffiths", size=Pt(8.5), color=_GRAY_MID)
     fp.add_run("\t")
     _v2_run(fp, "Page ", size=Pt(8.5), color=_GRAY_MID)
     pr = fp.add_run(); pr.font.name = "Calibri"; pr.font.size = Pt(8.5); pr.font.color.rgb = _GRAY_MID
@@ -721,15 +758,24 @@ def generate_docx_bytes(
         sec.first_page_header.paragraphs[0].clear()
     if sec.first_page_footer.paragraphs:
         sec.first_page_footer.paragraphs[0].clear()
+    # Running header — empty
     hp = sec.header.paragraphs[0] if sec.header.paragraphs else sec.header.add_paragraph()
-    hp.clear(); _v2_right_tab(hp)
-    _v2_run(hp, f"{data['title']} • Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
-    hp.add_run("\t")
-    _v2_run(hp, data["date"], size=Pt(8.5), color=_GRAY_MID)
-    _v2_pborder(hp, "bottom", 6, _CYAN_HEX, space=4)
+    hp.clear()
+    # Running footer — three-column: committee (left), name (center), page (right)
     fp = sec.footer.paragraphs[0] if sec.footer.paragraphs else sec.footer.add_paragraph()
-    fp.clear(); _v2_right_tab(fp)
-    _v2_run(fp, "NEPOOL Markets Committee", size=Pt(8.5), color=_GRAY_MID)
+    fp.clear()
+    pPr = fp._p.get_or_add_pPr()
+    tabs = OxmlElement("w:tabs")
+    tab_c = OxmlElement("w:tab")
+    tab_c.set(qn("w:val"), "center"); tab_c.set(qn("w:pos"), str(_CONTENT_W // 2))
+    tabs.append(tab_c)
+    tab_r = OxmlElement("w:tab")
+    tab_r.set(qn("w:val"), "right"); tab_r.set(qn("w:pos"), str(_CONTENT_W))
+    tabs.append(tab_r)
+    pPr.append(tabs)
+    _v2_run(fp, f"{data['title']} • Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
+    fp.add_run("\t")
+    _v2_run(fp, "B.W.Griffiths", size=Pt(8.5), color=_GRAY_MID)
     fp.add_run("\t")
     _v2_run(fp, "Page ", size=Pt(8.5), color=_GRAY_MID)
     pr = fp.add_run(); pr.font.name = "Calibri"; pr.font.size = Pt(8.5); pr.font.color.rgb = _GRAY_MID
