@@ -55,9 +55,16 @@ For items with known next steps, end each section with a brief **Next Steps**
 line. Note study completion timelines, stakeholder comment periods, RSP
 publication dates, or FERC filing milestones. Omit if nothing is known.
 
-Total briefing target: approximately 800–1,100 words excluding this template.
+**Length proportionality:** Allocate briefing space to each agenda item
+roughly in proportion to the length of its underlying summary material.
+An omnibus item with many substantive sub-items should receive
+proportionally more space than a single-presentation item — not less.
+
+There is no hard word limit. Write as much as needed to do justice to
+the source material — typically 1,000–3,000 words for a standard meeting.
 Prioritize analytical depth on the high-relevance items over comprehensive
-coverage of all items.
+coverage of all items, but do not sacrifice depth on later agenda items
+to stay within an arbitrary length target.
 
 ---
 

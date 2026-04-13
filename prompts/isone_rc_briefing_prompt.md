@@ -59,9 +59,16 @@ line. Distinguish between stakeholder process milestones (comment deadlines,
 RC/PC vote dates), regulatory milestones (FERC filing, NERC/NPCC approval),
 and effective dates. Omit if nothing is known.
 
-Total briefing target: approximately 800–1,100 words excluding this template.
+**Length proportionality:** Allocate briefing space to each agenda item
+roughly in proportion to the length of its underlying summary material.
+An omnibus item with many substantive sub-items should receive
+proportionally more space than a single-presentation item — not less.
+
+There is no hard word limit. Write as much as needed to do justice to
+the source material — typically 1,000–3,000 words for a standard meeting.
 Prioritize analytical depth on the high-relevance items over comprehensive
-coverage of all items.
+coverage of all items, but do not sacrifice depth on later agenda items
+to stay within an arbitrary length target.
 
 ---
 

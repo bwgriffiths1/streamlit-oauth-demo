@@ -56,9 +56,18 @@ line. Distinguish between stakeholder process milestones (comment deadlines,
 MC/PC vote dates), regulatory milestones (FERC filing, FERC approval), and
 tariff effective dates. Omit if nothing is known.
 
-Total briefing target: approximately 1,000–2,500 words excluding this template.
+**Length proportionality:** Allocate briefing space to each agenda item
+roughly in proportion to the length of its underlying summary material.
+An omnibus item with many substantive sub-items (e.g., CAR-SA with 9
+presentations) should receive proportionally more space than a single-
+presentation item — not less. If one item accounts for half the source
+material, it should get roughly half the briefing body.
+
+There is no hard word limit. Write as much as needed to do justice to
+the source material — typically 3,000–6,000 words for a full-day meeting.
 Prioritize analytical depth on the high-relevance items over comprehensive
-coverage of all items.
+coverage of all items, but do not sacrifice depth on later agenda items
+to stay within an arbitrary length target.
 
 If images are provided, you may include up to 2 inline in the relevant agenda
 item sections using KEEP_IMAGE directives. Only include a chart or diagram if
