@@ -632,10 +632,9 @@ def build_and_save_briefing_v2(
     # Running header — empty (no text, just a bottom border)
     hp = sec.header.paragraphs[0] if sec.header.paragraphs else sec.header.add_paragraph()
     hp.clear()
-    # Running footer — three-column: committee (left), name (center), page (right)
+    # Running footer — LEFT: "Meeting Briefing" | CENTER: Page N | RIGHT: Date • Committee
     fp = sec.footer.paragraphs[0] if sec.footer.paragraphs else sec.footer.add_paragraph()
     fp.clear()
-    # Set up center and right tab stops
     pPr = fp._p.get_or_add_pPr()
     tabs = OxmlElement("w:tabs")
     tab_c = OxmlElement("w:tab")
@@ -645,13 +644,13 @@ def build_and_save_briefing_v2(
     tab_r.set(qn("w:val"), "right"); tab_r.set(qn("w:pos"), str(_CONTENT_W))
     tabs.append(tab_r)
     pPr.append(tabs)
-    _v2_run(fp, f"{data['title']} • Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
-    fp.add_run("\t")
-    _v2_run(fp, "B.W.Griffiths", size=Pt(8.5), color=_GRAY_MID)
+    _v2_run(fp, "Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
     fp.add_run("\t")
     _v2_run(fp, "Page ", size=Pt(8.5), color=_GRAY_MID)
     pr = fp.add_run(); pr.font.name = "Calibri"; pr.font.size = Pt(8.5); pr.font.color.rgb = _GRAY_MID
     _v2_page_number(pr)
+    fp.add_run("\t")
+    _v2_run(fp, f"{data['date']} • {data['title']}", size=Pt(8.5), color=_GRAY_MID)
     _v2_pborder(fp, "top", 6, _CYAN_HEX, space=4)
 
     # Remove default empty paragraph
@@ -666,7 +665,7 @@ def build_and_save_briefing_v2(
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(4))
     _v2_run(p, data["title"], size=Pt(28), bold=True, color=_CHARCOAL)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(10)); _v2_right_tab(p)
-    _v2_run(p, data["subtitle"], size=Pt(14), color=_CYAN)
+    _v2_run(p, "B.W. Griffiths", size=Pt(12), color=_CYAN)
     p.add_run("\t")
     _v2_run(p, data["date"], size=Pt(12), color=_GRAY_TEXT)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
@@ -761,7 +760,7 @@ def generate_docx_bytes(
     # Running header — empty
     hp = sec.header.paragraphs[0] if sec.header.paragraphs else sec.header.add_paragraph()
     hp.clear()
-    # Running footer — three-column: committee (left), name (center), page (right)
+    # Running footer — LEFT: "Meeting Briefing" | CENTER: Page N | RIGHT: Date • Committee
     fp = sec.footer.paragraphs[0] if sec.footer.paragraphs else sec.footer.add_paragraph()
     fp.clear()
     pPr = fp._p.get_or_add_pPr()
@@ -773,13 +772,13 @@ def generate_docx_bytes(
     tab_r.set(qn("w:val"), "right"); tab_r.set(qn("w:pos"), str(_CONTENT_W))
     tabs.append(tab_r)
     pPr.append(tabs)
-    _v2_run(fp, f"{data['title']} • Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
-    fp.add_run("\t")
-    _v2_run(fp, "B.W.Griffiths", size=Pt(8.5), color=_GRAY_MID)
+    _v2_run(fp, "Meeting Briefing", size=Pt(8.5), color=_GRAY_MID)
     fp.add_run("\t")
     _v2_run(fp, "Page ", size=Pt(8.5), color=_GRAY_MID)
     pr = fp.add_run(); pr.font.name = "Calibri"; pr.font.size = Pt(8.5); pr.font.color.rgb = _GRAY_MID
     _v2_page_number(pr)
+    fp.add_run("\t")
+    _v2_run(fp, f"{data['date']} • {data['title']}", size=Pt(8.5), color=_GRAY_MID)
     _v2_pborder(fp, "top", 6, _CYAN_HEX, space=4)
 
     if doc.paragraphs:
@@ -792,7 +791,7 @@ def generate_docx_bytes(
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(4))
     _v2_run(p, data["title"], size=Pt(28), bold=True, color=_CHARCOAL)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(10)); _v2_right_tab(p)
-    _v2_run(p, data["subtitle"], size=Pt(14), color=_CYAN)
+    _v2_run(p, "B.W. Griffiths", size=Pt(12), color=_CYAN)
     p.add_run("\t")
     _v2_run(p, data["date"], size=Pt(12), color=_GRAY_TEXT)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
