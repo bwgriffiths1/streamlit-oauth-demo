@@ -14,7 +14,11 @@ st.set_page_config(
 from pipeline.auth import (
     is_authenticated, get_current_user,
     authenticate_user, login_local_user, logout_local_user,
+    restore_local_session,
 )
+
+# Try to restore local session from cookie before checking auth
+restore_local_session()
 
 # --- Landing page (unauthenticated) ---
 if not is_authenticated():

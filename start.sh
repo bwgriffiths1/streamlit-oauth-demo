@@ -14,6 +14,7 @@ cookie_secret = "$AUTH_COOKIE_SECRET"
 client_id = "$AUTH_CLIENT_ID"
 client_secret = "$AUTH_CLIENT_SECRET"
 server_metadata_url = "$AUTH_SERVER_METADATA_URL"
+token_expiry = 604800
 EOF
     echo "Generated .streamlit/secrets.toml from env vars."
 fi
