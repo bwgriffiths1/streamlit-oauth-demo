@@ -909,3 +909,164 @@ def approve_summary_version(summary_id: int) -> None:
                 "UPDATE summary_versions SET status = 'approved' WHERE id = %s",
                 (summary_id,),
             )
+
+
+# ---------------------------------------------------------------------------
+# Tags — additional helpers
+# ---------------------------------------------------------------------------
+
+def list_all_tags(tag_type: str | None = None) -> list[dict]:
+    """Return all tags, optionally filtered by tag_type."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            sql = "SELECT * FROM tags"
+            params: list = []
+            if tag_type:
+                sql += " WHERE tag_type = %s"
+                params.append(tag_type)
+            sql += " ORDER BY tag_type, name"
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def search_documents_by_tag(tag_name: str) -> list[dict]:
+    """Return documents tagged with the given tag, with meeting context."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT d.*, m.meeting_date, m.end_date, m.title AS meeting_title,
+                       mt.short_name AS type_short, mt.name AS type_name,
+                       v.short_name AS venue_short
+                FROM documents d
+                JOIN entity_tags et ON et.entity_type = 'document' AND et.entity_id = d.id
+                JOIN tags t         ON t.id = et.tag_id
+                JOIN meetings m     ON m.id = d.meeting_id
+                JOIN meeting_types mt ON mt.id = m.meeting_type_id
+                JOIN venues v       ON v.id = mt.venue_id
+                WHERE t.name = %s
+                ORDER BY m.meeting_date DESC, d.filename
+            """, (tag_name,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def search_documents_by_text(query: str, limit: int = 50) -> list[dict]:
+    """Search documents by filename (case-insensitive LIKE), with meeting context."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT d.*, m.meeting_date, m.end_date, m.title AS meeting_title,
+                       mt.short_name AS type_short, mt.name AS type_name,
+                       v.short_name AS venue_short
+                FROM documents d
+                JOIN meetings m     ON m.id = d.meeting_id
+                JOIN meeting_types mt ON mt.id = m.meeting_type_id
+                JOIN venues v       ON v.id = mt.venue_id
+                WHERE d.filename ILIKE %s
+                ORDER BY m.meeting_date DESC, d.filename
+                LIMIT %s
+            """, (f"%{query}%", limit))
+            return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Deep dive reports
+# ---------------------------------------------------------------------------
+
+def create_deep_dive_report(
+    title: str,
+    config: dict | None = None,
+    prompt_slug: str | None = None,
+    model_id: str | None = None,
+    created_by: str = "system",
+) -> dict:
+    """Create a new deep dive report and return it."""
+    import json as _json
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO deep_dive_reports
+                    (title, config, prompt_slug, model_id, created_by)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING *
+            """, (title, _json.dumps(config or {}), prompt_slug, model_id,
+                  created_by))
+            return dict(cur.fetchone())
+
+
+def update_deep_dive_report(report_id: int, **fields) -> None:
+    """Update specified fields on a deep dive report."""
+    allowed = {"title", "status", "report_md", "error_message", "config",
+               "prompt_slug", "model_id"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    # Serialize config to JSON if present
+    import json as _json
+    if "config" in updates and isinstance(updates["config"], dict):
+        updates["config"] = _json.dumps(updates["config"])
+    set_clause = ", ".join(f"{k} = %s" for k in updates)
+    values = list(updates.values()) + [report_id]
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute(
+                f"UPDATE deep_dive_reports SET {set_clause}, updated_at = NOW() WHERE id = %s",
+                values,
+            )
+
+
+def get_deep_dive_report(report_id: int) -> dict | None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("SELECT * FROM deep_dive_reports WHERE id = %s",
+                        (report_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def list_deep_dive_reports(limit: int = 50) -> list[dict]:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT * FROM deep_dive_reports
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def add_deep_dive_document(report_id: int, document_id: int, seq: int = 0) -> None:
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                INSERT INTO deep_dive_documents (report_id, document_id, seq)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+            """, (report_id, document_id, seq))
+
+
+def get_deep_dive_documents(report_id: int) -> list[dict]:
+    """Return source documents for a deep dive, with meeting context."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("""
+                SELECT d.*, dd.seq,
+                       m.meeting_date, m.end_date, m.title AS meeting_title,
+                       mt.short_name AS type_short, mt.name AS type_name,
+                       v.short_name AS venue_short
+                FROM deep_dive_documents dd
+                JOIN documents d      ON d.id = dd.document_id
+                JOIN meetings m       ON m.id = d.meeting_id
+                JOIN meeting_types mt ON mt.id = m.meeting_type_id
+                JOIN venues v         ON v.id = mt.venue_id
+                WHERE dd.report_id = %s
+                ORDER BY dd.seq, d.filename
+            """, (report_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def delete_deep_dive_report(report_id: int) -> None:
+    """Delete a deep dive report and its document links (cascades)."""
+    with _conn() as conn:
+        with _cursor(conn) as cur:
+            cur.execute("DELETE FROM deep_dive_reports WHERE id = %s",
+                        (report_id,))

@@ -665,7 +665,7 @@ def build_and_save_briefing_v2(
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(4))
     _v2_run(p, data["title"], size=Pt(28), bold=True, color=_CHARCOAL)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(10)); _v2_right_tab(p)
-    _v2_run(p, "B.W. Griffiths", size=Pt(12), color=_CYAN)
+    _v2_run(p, "Meeting Briefing", size=Pt(12), color=_CYAN)
     p.add_run("\t")
     _v2_run(p, data["date"], size=Pt(12), color=_GRAY_TEXT)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
@@ -791,7 +791,7 @@ def generate_docx_bytes(
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(4))
     _v2_run(p, data["title"], size=Pt(28), bold=True, color=_CHARCOAL)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(10)); _v2_right_tab(p)
-    _v2_run(p, "B.W. Griffiths", size=Pt(12), color=_CYAN)
+    _v2_run(p, "Meeting Briefing", size=Pt(12), color=_CYAN)
     p.add_run("\t")
     _v2_run(p, data["date"], size=Pt(12), color=_GRAY_TEXT)
     p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
@@ -826,6 +826,161 @@ def generate_docx_bytes(
                 _v2_run(p, "–  ", size=Pt(10), color=_CHARCOAL)
                 _v2_bold_runs(p, step, size=Pt(10), color=_CHARCOAL)
 
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.read()
+
+
+# ---------------------------------------------------------------------------
+# Deep dive / special report rendering
+# ---------------------------------------------------------------------------
+
+def _parse_deep_dive_md(text: str) -> dict:
+    """
+    Parse deep-dive report markdown into structured data.
+    Returns {"title", "date", "sections": [{"heading", "body": [str]}]}.
+    Generic section parser — not hardcoded to briefing structure.
+    """
+    lines = text.splitlines()
+    data: dict = {"title": "", "date": "", "sections": []}
+    i = 0
+
+    # Optional H1 title
+    for j, line in enumerate(lines):
+        s = line.strip()
+        if s.startswith("## "):
+            break
+        if s.startswith("# "):
+            data["title"] = s[2:].strip()
+            i = j + 1
+            break
+
+    # Scan for ## sections
+    current_section: dict | None = None
+    while i < len(lines):
+        s = lines[i].strip()
+        if s.startswith("## "):
+            if current_section:
+                data["sections"].append(current_section)
+            heading = s[3:].strip()
+            current_section = {"heading": heading, "body": []}
+            i += 1
+            continue
+        if s == "---":
+            i += 1
+            continue
+        if current_section is not None and s:
+            current_section["body"].append(s)
+        elif current_section is not None and not s:
+            # Preserve paragraph breaks as empty strings
+            current_section["body"].append("")
+        i += 1
+
+    if current_section:
+        data["sections"].append(current_section)
+
+    return data
+
+
+def generate_deep_dive_docx_bytes(
+    report_md: str,
+    title: str,
+    document_names: list[str],
+    date_range: str,
+) -> bytes:
+    """
+    Render a deep dive report as a .docx using the NEPOOL brand design.
+    Returns raw bytes for st.download_button().
+    """
+    import io
+
+    data = _parse_deep_dive_md(report_md)
+    data["title"] = data["title"] or title
+    data["date"] = data["date"] or date_range
+
+    doc = Document()
+
+    # Page setup
+    sec = doc.sections[0]
+    sec.page_width = Inches(8.5); sec.page_height = Inches(11)
+    sec.top_margin = Twips(1008); sec.bottom_margin = Twips(1008)
+    sec.left_margin = Inches(1.0); sec.right_margin = Inches(1.0)
+
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"; style.font.size = Pt(10.5)
+    style.font.color.rgb = _CHARCOAL
+
+    # Header / footer
+    sec.different_first_page_header_footer = True
+    if sec.first_page_header.paragraphs:
+        sec.first_page_header.paragraphs[0].clear()
+    if sec.first_page_footer.paragraphs:
+        sec.first_page_footer.paragraphs[0].clear()
+    hp = sec.header.paragraphs[0] if sec.header.paragraphs else sec.header.add_paragraph()
+    hp.clear()
+    # Running footer — LEFT: "Special Report" | CENTER: Page N | RIGHT: Date • Title
+    fp = sec.footer.paragraphs[0] if sec.footer.paragraphs else sec.footer.add_paragraph()
+    fp.clear()
+    pPr = fp._p.get_or_add_pPr()
+    tabs = OxmlElement("w:tabs")
+    tab_c = OxmlElement("w:tab")
+    tab_c.set(qn("w:val"), "center"); tab_c.set(qn("w:pos"), str(_CONTENT_W // 2))
+    tabs.append(tab_c)
+    tab_r = OxmlElement("w:tab")
+    tab_r.set(qn("w:val"), "right"); tab_r.set(qn("w:pos"), str(_CONTENT_W))
+    tabs.append(tab_r)
+    pPr.append(tabs)
+    _v2_run(fp, "Special Report", size=Pt(8.5), color=_GRAY_MID)
+    fp.add_run("\t")
+    _v2_run(fp, "Page ", size=Pt(8.5), color=_GRAY_MID)
+    pr = fp.add_run(); pr.font.name = "Calibri"; pr.font.size = Pt(8.5); pr.font.color.rgb = _GRAY_MID
+    _v2_page_number(pr)
+    fp.add_run("\t")
+    _v2_run(fp, f"{data['date']} • {data['title']}", size=Pt(8.5), color=_GRAY_MID)
+    _v2_pborder(fp, "top", 6, _CYAN_HEX, space=4)
+
+    # Remove default empty paragraph
+    if doc.paragraphs:
+        doc.paragraphs[0]._p.getparent().remove(doc.paragraphs[0]._p)
+
+    # ---- Title block ----
+    p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
+    _v2_pborder(p, "top", 36, _CYAN_HEX)
+    p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
+    _v2_run(p, "N E P O O L", size=Pt(8), bold=True, color=_CYAN)
+    p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(4))
+    _v2_run(p, data["title"], size=Pt(28), bold=True, color=_CHARCOAL)
+    p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(10)); _v2_right_tab(p)
+    _v2_run(p, "Special Report", size=Pt(12), color=_CYAN)
+    p.add_run("\t")
+    _v2_run(p, data["date"], size=Pt(12), color=_GRAY_TEXT)
+    p = doc.add_paragraph(); _v2_spacing(p, before=Pt(0), after=Pt(0))
+    _v2_pborder(p, "bottom", 4, _GRAY_MID_HEX)
+
+    # ---- Source documents listing ----
+    if document_names:
+        p = doc.add_paragraph(); _v2_spacing(p, before=Pt(10), after=Pt(6))
+        _v2_run(p, "Source documents: ", size=Pt(9), bold=True, color=_CHARCOAL)
+        _v2_run(p, ", ".join(document_names), size=Pt(9), color=_GRAY_TEXT)
+
+    # ---- Sections ----
+    for section in data["sections"]:
+        heading = section["heading"]
+        body = section["body"]
+
+        # Section heading — cyan-underlined like EXECUTIVE SUMMARY / AGENDA ITEM SUMMARIES
+        p = doc.add_paragraph(); _v2_spacing(p, before=Pt(22), after=Pt(11))
+        _v2_run(p, heading.upper(), size=Pt(10), bold=True, color=_CHARCOAL)
+        _v2_pborder(p, "bottom", 8, _CYAN_HEX, space=4)
+
+        # Executive Summary gets the shaded box treatment
+        if "executive summary" in heading.lower():
+            _render_v2_exec_summary(doc, [l for l in body if l])
+        else:
+            _render_v2_body_lines(doc, body)
+
+    # ---- Save to bytes ----
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)

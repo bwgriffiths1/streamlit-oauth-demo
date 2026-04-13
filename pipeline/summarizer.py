@@ -986,6 +986,101 @@ def _replace_keep_images_inline(detailed: str, all_images: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Public wrappers — used by pipeline/deep_dive.py
+# ---------------------------------------------------------------------------
+
+def get_text_for_doc(doc: dict) -> str:
+    """Public wrapper for _get_text_for_doc."""
+    return _get_text_for_doc(doc)
+
+
+def extract_and_store_images(
+    doc: dict,
+    meeting_folder: Path | None = None,
+    min_px: int = 200,
+) -> list[dict]:
+    """Public wrapper for _extract_and_store_images."""
+    return _extract_and_store_images(doc, meeting_folder=meeting_folder, min_px=min_px)
+
+
+def call_llm_multimodal(
+    client, model: str, text_prompt: str,
+    images: list[dict],
+    max_tokens: int = 4096,
+    max_retries: int = 3,
+    max_images: int = 10,
+    label: str = "",
+) -> str:
+    """Public wrapper for _call_llm_multimodal."""
+    return _call_llm_multimodal(
+        client, model, text_prompt, images,
+        max_tokens=max_tokens, max_retries=max_retries,
+        max_images=max_images, label=label,
+    )
+
+
+def replace_keep_images_inline(detailed: str, all_images: list[dict],
+                                max_keep: int = 2) -> str:
+    """
+    Public wrapper for _replace_keep_images_inline.
+    Supports a configurable max_keep (default 2 for backward compatibility).
+    """
+    if max_keep == 2:
+        return _replace_keep_images_inline(detailed, all_images)
+    # For custom max_keep, do inline replacement with different cap
+    if not all_images or not detailed:
+        return detailed
+    kept_count = 0
+
+    def _replace_match(m: re.Match) -> str:
+        nonlocal kept_count
+        if kept_count >= max_keep:
+            return ""
+        idx = int(m.group(1))
+        caption = m.group(2).strip()
+        match = next((img for img in all_images if img.get("_label_idx") == idx), None)
+        if not match:
+            match = next((img for img in all_images if img.get("id") == idx), None)
+        if not match:
+            fetched = _fetch_images_for_refs([idx])
+            match = fetched[0] if fetched else None
+        if not match:
+            return ""
+        kept_count += 1
+        img_id = match.get("id")
+        if img_id:
+            try:
+                db.set_image_description(img_id, caption)
+            except Exception:
+                pass
+        return f"\n**Figure:** {caption}\n\n<!-- image_id:{img_id} -->\n"
+
+    detailed = re.sub(
+        r"^KEEP_IMAGE\s+<?(\d+)>?\s*:\s*(.+)$",
+        _replace_match, detailed, flags=re.MULTILINE,
+    )
+    detailed = re.sub(r"^KEEP_IMAGE\s+<?\d+>?:.*$", "", detailed, flags=re.MULTILINE)
+    detailed = re.sub(r"##\s*(?:Key Figures|Visual Content)\s*\n*$", "", detailed)
+    detailed = re.sub(r"^No key figures\.?\s*$", "", detailed, flags=re.MULTILINE)
+    return detailed.strip()
+
+
+def clean_output(text: str) -> str:
+    """Public wrapper for _clean_output."""
+    return _clean_output(text)
+
+
+def load_prompt(slug: str) -> str:
+    """Public wrapper for _load_prompt."""
+    return _load_prompt(slug)
+
+
+def load_model_config() -> dict:
+    """Public wrapper for _load_model_config."""
+    return _load_model_config()
+
+
+# ---------------------------------------------------------------------------
 # Level 2 — Item rollup (parent items with child summaries)
 # ---------------------------------------------------------------------------
 

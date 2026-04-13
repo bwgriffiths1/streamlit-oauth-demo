@@ -94,6 +94,7 @@ pg = st.navigation(
         st.Page("v2_pages/agenda_debug.py",   title="Agenda Debug",   icon="🔍"),
         st.Page("v2_pages/prompt_library.py", title="Prompt Library", icon="✏️"),
         st.Page("v2_pages/parse_compare.py",  title="Parse Compare",  icon="🔀"),
+        st.Page("v2_pages/deep_dive.py",      title="Deep Dive",      icon="🔬"),
         st.Page("v2_pages/settings.py",       title="Settings",       icon="⚙️"),
         st.Page("v2_pages/nyiso_viewer.py",   title="NYISO",          icon="🏙️"),
         st.Page("v2_pages/pdf_summarizer.py", title="PDF Summarizer", icon="📄"),

@@ -217,3 +217,35 @@ CREATE TABLE IF NOT EXISTS app_users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users (email);
+
+-- -----------------------------------------------------------------------------
+-- 11. Deep dive reports  — cross-meeting special reports
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deep_dive_reports (
+    id            SERIAL PRIMARY KEY,
+    title         TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'draft',  -- draft | generating | complete | error
+    prompt_slug   TEXT,
+    model_id      TEXT,
+    config        JSONB NOT NULL DEFAULT '{}',    -- {max_images, comparison_mode, ...}
+    report_md     TEXT,
+    error_message TEXT,
+    created_by    TEXT DEFAULT 'system',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deep_dive_reports_status  ON deep_dive_reports (status);
+CREATE INDEX IF NOT EXISTS idx_deep_dive_reports_created ON deep_dive_reports (created_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- 12. Deep dive documents  — junction: report → source documents
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deep_dive_documents (
+    report_id   INT NOT NULL REFERENCES deep_dive_reports(id) ON DELETE CASCADE,
+    document_id INT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    seq         INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (report_id, document_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_deep_dive_docs_report ON deep_dive_documents (report_id);
