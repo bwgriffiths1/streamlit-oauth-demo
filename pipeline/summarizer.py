@@ -971,13 +971,13 @@ def _replace_keep_images_inline(detailed: str, all_images: list[dict]) -> str:
         return f"\n**Figure:** {caption}\n\n<!-- image_id:{img_id} -->\n"
 
     detailed = re.sub(
-        r"^KEEP_IMAGE\s+(\d+)\s*:\s*(.+)$",
+        r"^KEEP_IMAGE\s+<?(\d+)>?\s*:\s*(.+)$",
         _replace_match,
         detailed,
         flags=re.MULTILINE,
     )
     # Clean up any leftover KEEP_IMAGE lines (beyond the 2 kept)
-    detailed = re.sub(r"^KEEP_IMAGE\s+\d+:.*$", "", detailed, flags=re.MULTILINE)
+    detailed = re.sub(r"^KEEP_IMAGE\s+<?\d+>?:.*$", "", detailed, flags=re.MULTILINE)
     # Remove empty Key Figures / Visual Content headings the LLM may have added
     detailed = re.sub(r"##\s*(?:Key Figures|Visual Content)\s*\n*$", "", detailed)
     # Remove "No key figures" lines
