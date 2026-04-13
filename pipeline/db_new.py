@@ -351,14 +351,14 @@ def clear_agenda_for_meeting(meeting_id: int) -> None:
             )
 
 
-def update_agenda_item(item_id: int, **fields) -> None:
+def update_agenda_item(row_id: int, **fields) -> None:
     """Update editable metadata fields on an agenda item."""
     allowed = {"title", "item_id", "prefix", "presenter", "org", "vote_status", "wmpp_id", "time_slot", "notes"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
     set_clause = ", ".join(f"{k} = %s" for k in updates)
-    values = list(updates.values()) + [item_id]
+    values = list(updates.values()) + [row_id]
     with _conn() as conn:
         with _cursor(conn) as cur:
             cur.execute(f"UPDATE agenda_items SET {set_clause} WHERE id = %s", values)
