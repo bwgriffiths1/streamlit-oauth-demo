@@ -947,8 +947,17 @@ def _replace_keep_images_inline(detailed: str, all_images: list[dict]) -> str:
             return ""  # strip extras beyond 2
         idx = int(m.group(1))
         caption = m.group(2).strip()
-        # Find the matching image by _label_idx
+        # Find the matching image by _label_idx first, then fall back to
+        # matching by DB id (the LLM sometimes uses the actual DB id from
+        # <!-- image_id:N --> comments in the source summaries).
         match = next((img for img in all_images if img.get("_label_idx") == idx), None)
+        if not match:
+            match = next((img for img in all_images if img.get("id") == idx), None)
+        if not match:
+            # Image may be from a child item not in the pre-collected set;
+            # look it up directly in the DB.
+            fetched = _fetch_images_for_refs([idx])
+            match = fetched[0] if fetched else None
         if not match:
             return ""
         kept_count += 1
