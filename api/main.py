@@ -1,0 +1,106 @@
+"""FastAPI app — Poolside.
+
+Run with:
+    uvicorn api.main:app --reload --port 8000
+
+Wraps pipeline/db_new.py and pipeline/* with a thin REST surface consumed by
+the Vite + React frontend in /web.
+"""
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from .migrate import run_migrations
+from .routes import (
+    admin,
+    agenda_items,
+    briefings,
+    documents,
+    editor_images,
+    ingest,
+    me,
+    meetings,
+    prompts,
+    summaries,
+)
+from .scheduler import start_scheduler, stop_scheduler
+
+log = logging.getLogger("poolside.api")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Schema migrations on startup — idempotent.
+    try:
+        ran = run_migrations()
+        if ran:
+            log.info("migrations ran: %s", ", ".join(ran))
+        else:
+            log.info("no pending migrations")
+    except Exception as e:
+        log.exception("migration failure: %s", e)
+
+    # Cron scheduler (set POOLSIDE_SCHEDULER=off to disable).
+    try:
+        start_scheduler()
+    except Exception as e:
+        log.exception("scheduler failed to start: %s", e)
+
+    yield
+
+    try:
+        stop_scheduler()
+    except Exception:
+        pass
+
+
+app = FastAPI(title="Poolside API", version="0.1.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(me.router)
+app.include_router(meetings.router)
+app.include_router(briefings.router)
+app.include_router(documents.router)
+app.include_router(agenda_items.router)
+app.include_router(prompts.router)
+app.include_router(prompts.config_router)
+app.include_router(summaries.router)
+app.include_router(editor_images.router)
+app.include_router(ingest.router)
+app.include_router(admin.router)
+
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+# Serve the built SPA from /web/dist when present (Railway production layout).
+_DIST = Path(__file__).resolve().parent.parent / "web" / "dist"
+if _DIST.exists():
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/")
+    @app.get("/{path:path}")
+    def spa(path: str = "") -> FileResponse:
+        if path.startswith("api/"):
+            return FileResponse(_DIST / "index.html")
+        return FileResponse(_DIST / "index.html")

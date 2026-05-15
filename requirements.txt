@@ -12,3 +12,5 @@ python-dotenv
 psycopg2-binary
 bcrypt
 pdfplumber
+fastapi
+uvicorn[standard]
