@@ -10,6 +10,7 @@ import "./styles/screens/meeting.css";
 import "./styles/screens/briefing.css";
 import "./styles/screens/add.css";
 import "./styles/screens/prompts.css";
+import "./styles/screens/editor.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -6,6 +6,7 @@ import { Meeting } from "./routes/Meeting";
 import { Briefings } from "./routes/Briefings";
 import { Briefing } from "./routes/Briefing";
 import { Add } from "./routes/Add";
+import { Editor } from "./routes/Editor";
 import { Prompts } from "./routes/Prompts";
 import { Stub } from "./routes/Stub";
 
@@ -21,6 +22,7 @@ export function App() {
           <Route path="/briefings" element={<Briefings />} />
           <Route path="/briefing/:id" element={<Briefing />} />
           <Route path="/add" element={<Add />} />
+          <Route path="/edit/:type/:id" element={<Editor />} />
           <Route path="/deepdive" element={<Stub name="deepdive" />} />
           <Route path="/bulk" element={<Stub name="bulk" />} />
           <Route path="/prompts" element={<Prompts />} />
