@@ -191,7 +191,17 @@ export function Briefing() {
             >
               <Icon name="edit" /> Edit
             </button>
-            <button className="btn btn-sm">
+            <button
+              className="btn btn-sm"
+              onClick={async () => {
+                try {
+                  await api.downloadBriefingDocx(meetingId);
+                } catch (err) {
+                  console.error("Download failed", err);
+                  alert("Could not download briefing — see console for details.");
+                }
+              }}
+            >
               <Icon name="download" /> Download .docx
             </button>
             <button className="btn btn-sm btn-primary">

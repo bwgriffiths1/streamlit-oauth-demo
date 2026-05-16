@@ -196,6 +196,29 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
+
+  downloadBriefingDocx: async (meeting_id: number): Promise<void> => {
+    const res = await fetch(`${BASE}/meetings/${meeting_id}/briefing.docx`, {
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+
+    // Prefer the server's Content-Disposition filename when present.
+    let filename = `Briefing_${meeting_id}.docx`;
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = cd.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+    if (m) filename = decodeURIComponent(m[1] || m[2]);
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export interface SummaryPayload {
@@ -242,7 +265,6 @@ export interface VenueCommitteePrompts {
   short_name: string;
   name: string;
   briefing: PromptMeta;
-  briefing_detailed: PromptMeta;
   agenda_item: PromptMeta;
 }
 
