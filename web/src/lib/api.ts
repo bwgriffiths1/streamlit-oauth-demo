@@ -124,6 +124,17 @@ export const api = {
   deleteAgendaItem: (row_id: number) =>
     mutate(`/agenda-items/${row_id}`, "DELETE"),
 
+  resummarizeAgendaItem: async (
+    row_id: number
+  ): Promise<{ ok: boolean; model?: string; n_inputs?: number; reason?: string | null }> => {
+    const res = await fetch(`${BASE}/agenda-items/${row_id}/resummarize`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  },
+
   // ── Prompt library ───────────────────────────────────────────────────────
   prompts: () => get<PromptIndex>(`/prompts`),
   prompt: (slug: string) => get<PromptContent>(`/prompts/${slug}`),
@@ -141,6 +152,33 @@ export const api = {
     entity_id: number,
     body: { one_line?: string; detailed: string }
   ) => mutate(`/summaries/${entity_type}/${entity_id}`, "PUT", body),
+
+  listSummaryVersions: (
+    entity_type: "meeting" | "agenda_item",
+    entity_id: number
+  ) =>
+    get<SummaryVersionMeta[]>(
+      `/summaries/${entity_type}/${entity_id}/versions`
+    ),
+
+  getSummaryVersion: (
+    entity_type: "meeting" | "agenda_item",
+    entity_id: number,
+    version_id: number
+  ) =>
+    get<SummaryVersionFull>(
+      `/summaries/${entity_type}/${entity_id}/versions/${version_id}`
+    ),
+
+  restoreSummaryVersion: (
+    entity_type: "meeting" | "agenda_item",
+    entity_id: number,
+    version_id: number
+  ) =>
+    mutate(
+      `/summaries/${entity_type}/${entity_id}/versions/${version_id}/restore`,
+      "POST"
+    ),
 
   uploadEditorImage: async (body: {
     entity_type: "meeting" | "agenda_item";
@@ -172,6 +210,23 @@ export interface SummaryPayload {
   is_manual: boolean;
   created_at: string | null;
   created_by: string | null;
+}
+
+export interface SummaryVersionMeta {
+  id: number;
+  version: number;
+  status: string;
+  is_manual: boolean;
+  model_id: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  size: number;
+  preview: string;
+}
+
+export interface SummaryVersionFull extends SummaryVersionMeta {
+  detailed: string;
+  one_line: string;
 }
 
 export interface PromptMeta {
