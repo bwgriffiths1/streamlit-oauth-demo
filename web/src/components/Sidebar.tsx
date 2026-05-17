@@ -1,5 +1,7 @@
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "./Icon";
+import { api } from "../lib/api";
 import type { CurrentUser } from "../types";
 
 interface NavItem {
@@ -21,15 +23,20 @@ const GROUPS: NavGroup[] = [
       { to: "/overview", icon: "calendar", label: "Overview" },
       { to: "/meetings", icon: "list", label: "Meetings", matchPrefix: "/meeting" },
       { to: "/briefings", icon: "book", label: "Briefings", matchPrefix: "/briefing" },
-      { to: "/deepdive", icon: "spark", label: "Deep Dive" },
     ],
   },
   {
     label: "Pipeline",
     items: [
       { to: "/add", icon: "plus", label: "Add Meeting" },
-      { to: "/bulk", icon: "refresh", label: "Bulk Summarize" },
       { to: "/prompts", icon: "library", label: "Prompt Library" },
+    ],
+  },
+  {
+    label: "Dev",
+    items: [
+      { to: "/deepdive", icon: "spark", label: "Deep Dive" },
+      { to: "/bulk", icon: "refresh", label: "Bulk Summarize" },
     ],
   },
   {
@@ -40,10 +47,21 @@ const GROUPS: NavGroup[] = [
 
 interface SidebarProps {
   user: CurrentUser;
+  onOpenPalette: () => void;
 }
 
-export function Sidebar({ user }: SidebarProps) {
+export function Sidebar({ user, onOpenPalette }: SidebarProps) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  const onLogout = async () => {
+    try {
+      await api.logout();
+    } catch { /* ignore — clear local state regardless */ }
+    qc.clear();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <aside className="sidebar">
@@ -54,7 +72,7 @@ export function Sidebar({ user }: SidebarProps) {
         <span className="ver">v0.4</span>
       </div>
 
-      <button className="cmd-trigger" type="button">
+      <button className="cmd-trigger" type="button" onClick={onOpenPalette}>
         <Icon name="search" />
         <span className="lbl">Search meetings…</span>
         <span style={{ flex: 1 }} />
@@ -91,6 +109,15 @@ export function Sidebar({ user }: SidebarProps) {
             <div className="name">{user.name}</div>
             <div className="email">{user.email}</div>
           </div>
+          <button
+            type="button"
+            className="user-logout"
+            onClick={onLogout}
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <Icon name="logout" size={14} />
+          </button>
         </div>
       </div>
     </aside>

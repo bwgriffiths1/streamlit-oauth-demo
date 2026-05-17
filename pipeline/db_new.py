@@ -235,6 +235,14 @@ def list_meetings_overview(
                     mt.name                 AS type_name,
                     v.short_name            AS venue_short,
                     COUNT(DISTINCT d.id)    AS doc_count,
+                    COUNT(DISTINCT CASE
+                        WHEN d.ignored = false
+                         AND NOT EXISTS (
+                             SELECT 1 FROM item_documents idoc
+                             WHERE idoc.document_id = d.id
+                         )
+                        THEN d.id END)      AS unassigned_doc_count,
+                    COUNT(DISTINCT ai.id)   AS item_count,
                     COALESCE(MAX(CASE
                         WHEN sv.status IN ('draft','approved') AND sv.is_manual = false
                         THEN 1 ELSE 0 END), 0) AS has_summary,
@@ -246,6 +254,8 @@ def list_meetings_overview(
                 JOIN venues v         ON v.id  = mt.venue_id
                 LEFT JOIN documents d
                        ON d.meeting_id = m.id
+                LEFT JOIN agenda_items ai
+                       ON ai.meeting_id = m.id
                 LEFT JOIN summary_versions sv
                        ON sv.entity_type = 'meeting'
                       AND sv.entity_id   = m.id

@@ -252,6 +252,9 @@ def ingest_meeting(
         doc_db_rows.append({"db_row": row, "filename": filename, "url": doc.get("url")})
     logger.info("  %d document(s) upserted", len(doc_db_rows))
 
+    # Note: zip files are not expanded here. The summarizer opens .zip docs
+    # transparently at process time (see pipeline/summarizer.extract_text_zip).
+
     # ── 3. Parse agenda docx ─────────────────────────────────────────────────
     agenda_doc = _find_agenda_doc(doc_list)
     parsed_items: list[dict] = []
@@ -376,3 +379,43 @@ def ingest_meeting(
     db.set_meeting_status(meeting_id, "complete")
     logger.info("  Ingest complete: meeting_id=%s", meeting_id)
     return meeting_id
+
+
+# ---------------------------------------------------------------------------
+# Clean-up: undo a prior pre-expansion of zip archives
+# ---------------------------------------------------------------------------
+
+def cleanup_zip_expansion(meeting_id: int) -> dict[str, int]:
+    """Reverse an earlier `expand_zip_documents` run.
+
+    Deletes any document row whose source_url contains the synthetic `#zip:`
+    fragment, and un-ignores any `.zip` document rows. Used to migrate
+    meetings that were pre-expanded back to the on-demand model where the
+    summarizer opens zips at process time.
+
+    Returns counts of what was changed.
+    """
+    deleted_children = 0
+    un_ignored = 0
+
+    with db._conn() as conn:
+        with db._cursor(conn) as cur:
+            cur.execute(
+                """DELETE FROM documents
+                    WHERE meeting_id = %s
+                      AND source_url LIKE %s""",
+                (meeting_id, "%#zip:%"),
+            )
+            deleted_children = cur.rowcount or 0
+
+            cur.execute(
+                """UPDATE documents
+                       SET ignored = false
+                     WHERE meeting_id = %s
+                       AND file_type = '.zip'
+                       AND ignored = true""",
+                (meeting_id,),
+            )
+            un_ignored = cur.rowcount or 0
+
+    return {"deleted_children": deleted_children, "un_ignored_zips": un_ignored}

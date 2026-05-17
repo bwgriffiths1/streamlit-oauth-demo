@@ -32,20 +32,37 @@ async function get<T>(path: string, fallback?: () => T): Promise<T> {
 }
 
 export const api = {
-  me: () =>
-    get<CurrentUser>("/me", () => ({
-      name: "Ben Griffiths",
-      email: "ben@poolside.io",
-      initials: "BG",
-    })),
+  me: () => get<CurrentUser>("/me"),
 
-  meetings: (params?: { past_days?: number; future_days?: number; venue?: string }) => {
+  login: async (email: string, password: string): Promise<CurrentUser> => {
+    const res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      let detail = "Invalid email or password.";
+      try {
+        const data = await res.json();
+        if (typeof data?.detail === "string") detail = data.detail;
+      } catch { /* leave default */ }
+      throw new Error(detail);
+    }
+    return (await res.json()) as CurrentUser;
+  },
+
+  logout: () => mutate(`/auth/logout`, "POST"),
+
+  meetings: async (params?: { past_days?: number; future_days?: number; venue?: string }) => {
     const qs = new URLSearchParams();
     if (params?.past_days != null) qs.set("past_days", String(params.past_days));
     if (params?.future_days != null) qs.set("future_days", String(params.future_days));
     if (params?.venue) qs.set("venue", params.venue);
     const tail = qs.toString() ? `?${qs}` : "";
-    return get<MeetingListItem[]>(`/meetings${tail}`, () => MEETINGS);
+    const all = await get<MeetingListItem[]>(`/meetings${tail}`, () => MEETINGS);
+    // NYISO is intentionally hidden from the Vite UI for now (see plan).
+    return all.filter((m) => m.venue !== "NYISO");
   },
 
   // No fallback — if the API can't return a specific meeting / briefing,
@@ -82,19 +99,64 @@ export const api = {
   refreshMeeting: (meeting_id: number) =>
     mutate(`/admin/refresh-materials/${meeting_id}`, "POST"),
 
+  cleanupZipExpansion: async (
+    meeting_id: number
+  ): Promise<{
+    meeting_id: number;
+    deleted_children: number;
+    un_ignored_zips: number;
+  }> => {
+    const res = await fetch(
+      `${BASE}/admin/cleanup-zip-expansion/${meeting_id}`,
+      { method: "POST", credentials: "include" },
+    );
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  },
+
+  refreshAll: async (): Promise<{ refreshed: number; total: number }> => {
+    const res = await fetch(`${BASE}/admin/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  },
+
   bumpLifecycle: (meeting_id: number) =>
     mutate(`/admin/bump-lifecycle/${meeting_id}`, "POST"),
 
-  venues: () =>
-    get<VenueWithScrape[]>("/admin/venues", () => [
+  venues: async () => {
+    const all = await get<VenueWithScrape[]>("/admin/venues", () => [
       { id: 1, short_name: "ISO-NE", name: "ISO New England", last_scraped_at: null },
-      { id: 2, short_name: "NYISO", name: "New York ISO", last_scraped_at: null },
-    ]),
+    ]);
+    return all.filter((v) => v.short_name !== "NYISO");
+  },
 
   schedulerStatus: () =>
     get<SchedulerStatus>("/admin/scheduler", () => ({ running: false, jobs: [] })),
 
   triggerDiscover: () => mutate(`/admin/discover`, "POST"),
+
+  ingestByUrl: async (
+    body: { url: string; committee_short?: string }
+  ): Promise<IngestByUrlResult> => {
+    const res = await fetch(`${BASE}/admin/ingest-by-url`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        const data = await res.json();
+        if (typeof data?.detail === "string") detail = data.detail;
+      } catch { /* keep default */ }
+      throw new Error(detail);
+    }
+    return res.json();
+  },
 
   createAgendaItem: (
     meeting_id: number,
@@ -135,6 +197,38 @@ export const api = {
     return res.json();
   },
 
+  startSummarize: async (
+    meeting_id: number
+  ): Promise<{
+    job_id: number;
+    already_running: boolean;
+    estimated_cost_usd: number | null;
+    estimated_input_tokens: number | null;
+    estimated_output_tokens: number | null;
+  }> => {
+    const res = await fetch(`${BASE}/meetings/${meeting_id}/summarize`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        const data = await res.json();
+        if (typeof data?.detail === "string") detail = data.detail;
+      } catch { /* keep default */ }
+      throw new Error(detail);
+    }
+    return res.json();
+  },
+
+  estimateSummarize: (meeting_id: number) =>
+    get<SummarizeEstimate>(`/meetings/${meeting_id}/summarize/estimate`),
+
+  getJob: (job_id: number) => get<SummarizeJob>(`/jobs/${job_id}`),
+
+  getActiveJob: (meeting_id: number) =>
+    get<SummarizeJob | null>(`/meetings/${meeting_id}/active-job`),
+
   // ── Prompt library ───────────────────────────────────────────────────────
   prompts: () => get<PromptIndex>(`/prompts`),
   prompt: (slug: string) => get<PromptContent>(`/prompts/${slug}`),
@@ -143,6 +237,26 @@ export const api = {
   modelConfig: () => get<ModelConfig>(`/model-config`),
   saveModelConfig: (cfg: Partial<ModelConfig>) =>
     mutate(`/model-config`, "PUT", cfg),
+
+  // ── App settings (config.yaml) ──────────────────────────────────────────
+  getConfig: () => get<AppConfig>(`/admin/config`),
+  saveConfig: async (payload: AppConfig): Promise<AppConfig> => {
+    const res = await fetch(`${BASE}/admin/config`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try {
+        const data = await res.json();
+        if (typeof data?.detail === "string") detail = data.detail;
+      } catch { /* keep default */ }
+      throw new Error(detail);
+    }
+    return res.json();
+  },
 
   // ── Rich-text summary editor ────────────────────────────────────────────
   getSummary: (entity_type: "meeting" | "agenda_item", entity_id: number) =>
@@ -295,6 +409,66 @@ export interface ModelConfig {
   document_max_tokens: number;
   item_max_tokens: number;
   meeting_max_tokens: number;
+}
+
+export interface AppConfigCommittee {
+  name: string;
+  short: string;
+  url: string;
+  active: boolean;
+}
+
+export interface AppConfig {
+  lookahead_days: number;
+  committees: AppConfigCommittee[];
+}
+
+export interface IngestByUrlResult {
+  meeting_id: number;
+  external_id: string;
+  committee_short: string;
+  docs: number;
+  already_existed: boolean;
+}
+
+export interface SummarizeEstimateLine {
+  level: number;
+  item_id: string | null;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
+export interface SummarizeEstimate {
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  estimated_cost_usd: number;
+  model_breakdown: SummarizeEstimateLine[];
+  docs_without_text: number;
+  items_planned: number;
+}
+
+export type SummarizeJobStatus = "queued" | "running" | "complete" | "failed";
+
+export interface SummarizeJob {
+  id: number;
+  meeting_id: number;
+  status: SummarizeJobStatus;
+  progress_text: string;
+  level1_done: number;
+  level2_done: number;
+  level3_done: boolean;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  estimated_cost_usd: number | null;
+  estimated_input_tokens: number | null;
+  estimated_output_tokens: number | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+  created_by: string | null;
 }
 
 export interface VenueWithScrape {

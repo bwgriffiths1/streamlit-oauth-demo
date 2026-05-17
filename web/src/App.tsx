@@ -9,11 +9,14 @@ import { Add } from "./routes/Add";
 import { Editor } from "./routes/Editor";
 import { Prompts } from "./routes/Prompts";
 import { Stub } from "./routes/Stub";
+import { Login } from "./routes/Login";
+import { Settings } from "./routes/Settings";
 
 export function App() {
   return (
     <HashRouter>
       <Routes>
+        <Route path="/login" element={<Login />} />
         <Route element={<AppShell />}>
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Overview />} />
@@ -26,7 +29,7 @@ export function App() {
           <Route path="/deepdive" element={<Stub name="deepdive" />} />
           <Route path="/bulk" element={<Stub name="bulk" />} />
           <Route path="/prompts" element={<Prompts />} />
-          <Route path="/settings" element={<Stub name="settings" />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
       </Routes>

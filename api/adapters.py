@@ -67,7 +67,8 @@ def meeting_list_row(row: dict[str, Any], tags: list[str] | None = None,
         last_scraped_at=_iso(row.get("last_scraped_at")),
         agenda_parsed_at=_iso(row.get("agenda_parsed_at")),
         doc_count=row.get("doc_count") or 0,
-        item_count=item_count or 0,
+        unassigned_doc_count=row.get("unassigned_doc_count") or 0,
+        item_count=item_count if item_count is not None else (row.get("item_count") or 0),
         tags=tags or [],
     )
 

@@ -8,7 +8,7 @@ import { MeetingRow } from "../components/MeetingRow";
 import { api } from "../lib/api";
 import type { MeetingListItem, MeetingStatus } from "../types";
 
-type Venue = "All" | "ISO-NE" | "NYISO";
+type Venue = "All" | "ISO-NE";
 type StatusFilter = "All" | MeetingStatus;
 type View = "list" | "card";
 type DateRange = "all" | "upcoming" | "30d" | "90d" | "year";
@@ -93,7 +93,7 @@ export function Meetings() {
 
       <div className="page">
         <div className="page-header">
-          <div className="page-eyebrow">All meetings · ISO-NE, NYISO</div>
+          <div className="page-eyebrow">All meetings · ISO-NE</div>
           <h1 className="page-title">Meetings</h1>
           <p className="page-subtitle">
             Every meeting in the database — filterable by venue, type, status,
@@ -109,7 +109,6 @@ export function Meetings() {
               options={[
                 { value: "All", label: "All" },
                 { value: "ISO-NE", label: "ISO-NE" },
-                { value: "NYISO", label: "NYISO" },
               ]}
             />
             <Segmented

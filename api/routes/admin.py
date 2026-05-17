@@ -17,8 +17,11 @@ from pathlib import Path
 from pipeline import db_new as db
 from pipeline import refresh as pl_refresh
 from pipeline import scraper as pl_scraper
+from pipeline.ingest import cleanup_zip_expansion
 
 from .. import lifecycle, orchestrator
+from ..auth import current_user
+from fastapi import Depends
 
 log = logging.getLogger("poolside.admin")
 
@@ -222,6 +225,28 @@ def bump(meeting_id: int) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Meeting not found")
     new_status = lifecycle.bump_lifecycle(meeting_id)
     return {"meeting_id": str(meeting_id), "lifecycle_status": new_status}
+
+
+@router.post("/cleanup-zip-expansion/{meeting_id}")
+def cleanup_zips(
+    meeting_id: int,
+    _: dict = Depends(current_user),
+) -> dict[str, Any]:
+    """Undo a prior zip pre-expansion for this meeting.
+
+    Zip handling now happens inline at summarize time (the summarizer opens
+    zips transparently). This endpoint deletes child document rows produced
+    by the old `expand-zips` action and un-ignores the original zip docs.
+    Idempotent — safe to call on meetings that were never pre-expanded.
+    """
+    if db.get_meeting(meeting_id) is None:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    try:
+        result = cleanup_zip_expansion(meeting_id)
+    except Exception as e:
+        log.exception("cleanup_zip_expansion failed for meeting %s: %s", meeting_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"meeting_id": meeting_id, **result}
 
 
 @router.get("/scheduler")

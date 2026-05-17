@@ -24,6 +24,7 @@ export interface MeetingListItem {
   last_scraped_at?: string;
   agenda_parsed_at?: string;
   doc_count: number;
+  unassigned_doc_count?: number;
   item_count: number;
   tags: string[];
 }

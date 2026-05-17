@@ -28,7 +28,4 @@ export const SCRAPED_MEETINGS: ScrapedMeeting[] = [
   { venue: "ISO-NE", committee: "Markets Committee", date: "2026-06-10", end: "2026-06-11", source: "iso-ne.com", status: "new", docs: 0 },
   { venue: "ISO-NE", committee: "Transmission Committee", date: "2026-05-27", source: "iso-ne.com", status: "new", docs: 0 },
   { venue: "ISO-NE", committee: "Reliability Committee", date: "2026-05-20", source: "iso-ne.com", status: "exists", docs: 18 },
-  { venue: "NYISO", committee: "Management Committee", date: "2026-05-28", source: "nyiso.com", status: "new", docs: 0 },
-  { venue: "NYISO", committee: "Operating Committee", date: "2026-05-22", source: "nyiso.com", status: "exists", docs: 0 },
-  { venue: "NYISO", committee: "Business Issues Comm.", date: "2026-06-11", source: "nyiso.com", status: "new", docs: 0 },
 ];
