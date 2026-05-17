@@ -10,7 +10,7 @@ import { api } from "../lib/api";
 import { fmtDateRange, monthLabel, dayNumber } from "../lib/format";
 import type { MeetingListItem } from "../types";
 
-type Venue = "All" | "ISO-NE" | "NYISO";
+type Venue = "All" | "ISO-NE";
 
 export function Briefings() {
   const navigate = useNavigate();
@@ -56,7 +56,7 @@ export function Briefings() {
 
       <div className="page">
         <div className="page-header">
-          <div className="page-eyebrow">Published briefings · ISO-NE, NYISO</div>
+          <div className="page-eyebrow">Published briefings · ISO-NE</div>
           <h1 className="page-title">Briefings</h1>
           <p className="page-subtitle">
             Every meeting with an AI-generated briefing. {sorted.length} of {briefings.length} shown.
@@ -70,7 +70,6 @@ export function Briefings() {
             options={[
               { value: "All", label: "All" },
               { value: "ISO-NE", label: "ISO-NE" },
-              { value: "NYISO", label: "NYISO" },
             ]}
           />
           <div className="spacer" />

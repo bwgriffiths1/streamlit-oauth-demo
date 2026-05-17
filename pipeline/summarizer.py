@@ -15,8 +15,10 @@ import hashlib
 import json
 import logging
 import re
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import base64
 import io
@@ -32,7 +34,7 @@ import pipeline.db_new as db
 
 logger = logging.getLogger(__name__)
 
-SUMMARIZE_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+SUMMARIZE_EXTENSIONS = {".pdf", ".docx", ".pptx", ".zip"}
 
 # Absolute path to repo root (parent of this file's parent)
 _REPO_ROOT = Path(__file__).parent.parent
@@ -182,7 +184,61 @@ def extract_text(file_path: Path) -> str:
         return extract_text_docx(file_path)
     if ext == ".pptx":
         return extract_text_pptx(file_path)
+    if ext == ".zip":
+        return extract_text_zip(file_path)
     raise ValueError(f"No extractor for file type: {ext}")
+
+
+def extract_text_zip(file_path: Path) -> str:
+    """Open a zip and concatenate the text of every PDF/DOCX/PPTX inside.
+
+    Each entry is delimited so the LLM can tell where one ends and the next
+    begins. Directories, hidden files, and unsupported extensions are skipped.
+    Corrupted or password-protected entries are logged and skipped rather
+    than failing the whole document.
+    """
+    import tempfile
+    import zipfile
+
+    parts: list[str] = []
+    try:
+        with zipfile.ZipFile(str(file_path)) as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                inner = info.filename
+                base = Path(inner).name
+                if not base or base.startswith("."):
+                    continue
+                inner_ext = Path(base).suffix.lower()
+                if inner_ext not in SUMMARIZE_EXTENSIONS:
+                    continue
+                tmp_path: Path | None = None
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=inner_ext, delete=False) as out:
+                        with zf.open(info) as src:
+                            while True:
+                                chunk = src.read(65536)
+                                if not chunk:
+                                    break
+                                out.write(chunk)
+                        tmp_path = Path(out.name)
+                    body = extract_text(tmp_path)
+                except Exception as exc:
+                    logger.warning(
+                        "extract_text_zip: failed on entry %r in %s: %s",
+                        inner, file_path.name, exc,
+                    )
+                    continue
+                finally:
+                    if tmp_path is not None:
+                        tmp_path.unlink(missing_ok=True)
+                if body.strip():
+                    parts.append(f"[Zip entry: {inner}]\n{body.strip()}")
+    except zipfile.BadZipFile:
+        logger.warning("extract_text_zip: not a zip (or corrupted): %s", file_path)
+        return ""
+    return "\n\n---\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +638,41 @@ def _clean_output(text: str) -> str:
 # LLM call helper
 # ---------------------------------------------------------------------------
 
+# Thread-local capture of Anthropic usage payloads. Active only when
+# capture_usage() is entered; otherwise records are dropped. Per-thread so
+# concurrent jobs (each on its own daemon thread) can't blend their totals.
+_usage_local = threading.local()
+
+
+def _record_usage(model: str, msg) -> None:
+    log = getattr(_usage_local, "log", None)
+    if log is None:
+        return
+    u = getattr(msg, "usage", None)
+    if u is None:
+        return
+    log.append({
+        "model": model,
+        "input_tokens": int(getattr(u, "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(u, "output_tokens", 0) or 0),
+        "cache_creation_input_tokens": int(getattr(u, "cache_creation_input_tokens", 0) or 0),
+        "cache_read_input_tokens": int(getattr(u, "cache_read_input_tokens", 0) or 0),
+    })
+
+
+@contextmanager
+def capture_usage() -> Iterator[list[dict]]:
+    """Context manager: while active, every _call_llm / _call_llm_multimodal
+    in this thread appends its usage to the yielded list. Nesting is not
+    supported (outer scope wins / collects)."""
+    bucket: list[dict] = []
+    _usage_local.log = bucket
+    try:
+        yield bucket
+    finally:
+        _usage_local.log = None
+
+
 def _call_llm(client, model: str, prompt: str, max_tokens: int = 4096,
               max_retries: int = 3, label: str = "") -> str:
     """Streaming LLM call with retry on rate-limit and truncation handling."""
@@ -595,6 +686,7 @@ def _call_llm(client, model: str, prompt: str, max_tokens: int = 4096,
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
                 msg = stream.get_final_message()
+            _record_usage(model, msg)
             text = _clean_output(msg.content[0].text.strip())
             if msg.stop_reason == "max_tokens":
                 retry_max = min(current_max * 2, 65536)
@@ -680,6 +772,7 @@ def _call_llm_multimodal(
                 messages=[{"role": "user", "content": content}],
             ) as stream:
                 msg = stream.get_final_message()
+            _record_usage(model, msg)
             text = _clean_output(msg.content[0].text.strip())
             if msg.stop_reason == "max_tokens":
                 retry_max = min(current_max * 2, 65536)
@@ -1586,3 +1679,216 @@ def get_summary(entity_type: str, entity_id: int) -> dict | None:
 def list_summaries(entity_type: str, entity_id: int) -> list[dict]:
     """Return all summary versions for any entity, newest first."""
     return db.list_summary_versions(entity_type, entity_id)
+
+
+# ---------------------------------------------------------------------------
+# Cost estimation (pre-run preview)
+# ---------------------------------------------------------------------------
+
+# Heuristic: average bytes per token for Anthropic models on English text.
+_CHARS_PER_TOKEN = 4
+
+# Conservative per-doc token allowance when raw_content is missing (first run).
+_DOC_TOKENS_WHEN_UNEXTRACTED = 5000
+
+# Output-tokens estimate: most calls don't max out, so assume half of max_tokens.
+_OUTPUT_RATIO_OF_MAX = 0.5
+
+
+def _approx_tokens_from_chars(n_chars: int) -> int:
+    return max(1, n_chars // _CHARS_PER_TOKEN)
+
+
+def estimate_summarization_cost(meeting_id: int) -> dict:
+    """Walk the meeting the same way `run_meeting_summarization` would and
+    return a pre-flight cost estimate.
+
+    Heuristic by design: input tokens are derived from cached document text
+    (`documents.raw_content`) plus a conservative fallback for docs that
+    haven't been extracted yet. Output tokens are assumed to be ~50% of the
+    per-level max. The UI should label the figure as approximate.
+
+    Returns:
+        {
+            "estimated_input_tokens":  int,
+            "estimated_output_tokens": int,
+            "estimated_cost_usd":      Decimal,
+            "model_breakdown":         list[dict],
+            "docs_without_text":       int,
+            "items_planned":           int,
+        }
+    """
+    from .pricing import compute_cost
+
+    meeting = db.get_meeting(meeting_id)
+    if meeting is None:
+        return {
+            "estimated_input_tokens": 0,
+            "estimated_output_tokens": 0,
+            "estimated_cost_usd": 0,
+            "model_breakdown": [],
+            "docs_without_text": 0,
+            "items_planned": 0,
+        }
+
+    venue_short = meeting.get("venue_short", "ISO-NE")
+    type_short = meeting.get("type_short", "MC")
+    briefing_prompt, agenda_item_prompt = _get_committee_prompts(type_short, venue_short)
+    briefing_prompt = briefing_prompt or ""
+    agenda_item_prompt = agenda_item_prompt or ""
+    doc_summary_prompt = _load_prompt("doc_summary_prompt") or ""
+
+    cfg = _load_model_config()
+    doc_model = cfg["document_model"]
+    item_model = cfg["item_model"]
+    mtg_model = cfg["meeting_model"]
+    doc_max = int(cfg.get("document_max_tokens", 4096))
+    item_max = int(cfg.get("item_max_tokens", 4096))
+    mtg_max = int(cfg.get("meeting_max_tokens", 4096))
+
+    all_items = db.get_agenda_items(meeting_id)
+
+    # Build children map the same way run_meeting_summarization does.
+    children_of: dict[int, list[dict]] = {}
+    for it in all_items:
+        pid = it.get("parent_id")
+        if pid is not None:
+            children_of.setdefault(pid, []).append(it)
+
+    breakdown: list[dict] = []
+    docs_without_text = 0
+    items_planned = 0
+
+    # Level 1 — every leaf item with usable docs
+    for item in all_items:
+        if children_of.get(item["id"]):
+            continue
+        docs = db.get_documents_for_item(item["id"])
+        usable = [
+            d for d in docs
+            if not d.get("ceii_skipped")
+            and not d.get("ignored")
+            and (d.get("file_type") or "").lower() in SUMMARIZE_EXTENSIONS
+        ]
+        if not usable:
+            continue
+
+        in_chars = len(doc_summary_prompt)
+        for d in usable:
+            raw = d.get("raw_content") or ""
+            if raw:
+                in_chars += len(raw)
+            else:
+                docs_without_text += 1
+                in_chars += _DOC_TOKENS_WHEN_UNEXTRACTED * _CHARS_PER_TOKEN
+        in_tok = _approx_tokens_from_chars(in_chars)
+        out_tok = int(doc_max * _OUTPUT_RATIO_OF_MAX)
+        cost = compute_cost(doc_model, in_tok, out_tok)
+        breakdown.append({
+            "level": 1,
+            "item_id": item.get("item_id"),
+            "model": doc_model,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "cost_usd": float(cost),
+        })
+        items_planned += 1
+
+    # Level 2 — every parent item with at least one child
+    for item in all_items:
+        kids = children_of.get(item["id"]) or []
+        if not kids:
+            continue
+        # Each child contributes roughly its existing summary length, or a
+        # conservative 3000-char placeholder if we don't have one yet.
+        in_chars = len(agenda_item_prompt)
+        for kid in kids:
+            existing = db.get_current_summary("agenda_item", kid["id"]) or {}
+            body = existing.get("detailed") or ""
+            in_chars += len(body) if body else 3000
+        in_tok = _approx_tokens_from_chars(in_chars)
+        out_tok = int(item_max * _OUTPUT_RATIO_OF_MAX)
+        cost = compute_cost(item_model, in_tok, out_tok)
+        breakdown.append({
+            "level": 2,
+            "item_id": item.get("item_id"),
+            "model": item_model,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "cost_usd": float(cost),
+        })
+        items_planned += 1
+
+    # Level 3 — meeting briefing
+    top_items = [
+        it for it in all_items
+        if it.get("parent_id") is None and not _should_skip_briefing(it)
+    ]
+    in_chars = len(briefing_prompt)
+    for it in top_items:
+        existing = db.get_current_summary("agenda_item", it["id"]) or {}
+        body = existing.get("detailed") or ""
+        in_chars += len(body) if body else 5000
+    in_tok = _approx_tokens_from_chars(in_chars)
+    out_tok = int(mtg_max * _OUTPUT_RATIO_OF_MAX)
+    cost = compute_cost(mtg_model, in_tok, out_tok)
+    breakdown.append({
+        "level": 3,
+        "item_id": None,
+        "model": mtg_model,
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "cost_usd": float(cost),
+    })
+    items_planned += 1
+
+    total_in = sum(b["input_tokens"] for b in breakdown)
+    total_out = sum(b["output_tokens"] for b in breakdown)
+    total_cost = sum(b["cost_usd"] for b in breakdown)
+
+    return {
+        "estimated_input_tokens": total_in,
+        "estimated_output_tokens": total_out,
+        "estimated_cost_usd": float(total_cost),
+        "model_breakdown": breakdown,
+        "docs_without_text": docs_without_text,
+        "items_planned": items_planned,
+    }
+
+
+def totals_from_usage_log(usage_log: list[dict]) -> dict:
+    """Sum a list of usage records (from `capture_usage()`) into totals
+    plus a per-model rollup and total USD cost. Used by the background
+    summarize job to write actuals back to the DB row.
+    """
+    from .pricing import compute_cost
+
+    total_in = 0
+    total_out = 0
+    per_model: dict[str, dict] = {}
+    total_cost = 0.0
+
+    for rec in usage_log:
+        m = rec.get("model") or "unknown"
+        in_tok = int(rec.get("input_tokens", 0) or 0)
+        out_tok = int(rec.get("output_tokens", 0) or 0)
+        cw = int(rec.get("cache_creation_input_tokens", 0) or 0)
+        cr = int(rec.get("cache_read_input_tokens", 0) or 0)
+        total_in += in_tok
+        total_out += out_tok
+        cost = float(compute_cost(m, in_tok, out_tok, cw, cr))
+        total_cost += cost
+        agg = per_model.setdefault(
+            m, {"model": m, "calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+        )
+        agg["calls"] += 1
+        agg["input_tokens"] += in_tok
+        agg["output_tokens"] += out_tok
+        agg["cost_usd"] += cost
+
+    return {
+        "input_tokens": total_in,
+        "output_tokens": total_out,
+        "cost_usd": total_cost,
+        "by_model": list(per_model.values()),
+    }

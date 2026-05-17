@@ -20,8 +20,6 @@ const INGEST_LOG_LINES = [
   "  ✓ 17/17 downloaded · 142.4 MB",
   "→ Parsing agenda from MC_2026_06_Agenda.pdf (LLM)…",
   "  detected 13 items, 4 votes scheduled",
-  "→ Scraping NYISO Management Committee…",
-  "  found 1 new meeting (2026-05-28)",
   "→ Ingesting ISO-NE Transmission Committee (2026-05-27)…",
   "  9 documents enumerated · 8 downloaded · 1 CEII-restricted (skipped)",
   "→ Building manifests…",
@@ -61,7 +59,6 @@ export function Add() {
     () =>
       new Set([
         "ISO-NE|Markets Committee|2026-06-10",
-        "NYISO|Management Committee|2026-05-28",
         "ISO-NE|Transmission Committee|2026-05-27",
       ])
   );
@@ -127,8 +124,8 @@ export function Add() {
           <div className="page-eyebrow">Pipeline · Ingest</div>
           <h1 className="page-title">Add meetings to Poolside.</h1>
           <p className="page-subtitle">
-            Either scrape upcoming meetings from ISO-NE and NYISO calendars, or
-            add a single meeting by URL. Documents and agendas are ingested
+            Either scrape upcoming meetings from the ISO-NE calendar, or add a
+            single meeting by URL. Documents and agendas are ingested
             automatically; summarization is triggered separately from each
             meeting page.
           </p>
@@ -358,69 +355,7 @@ export function Add() {
             </div>
           </>
         ) : (
-          <div className="ingest-step">
-            <StepHead n={1} label="Manual add" sub="Paste a meeting URL or upload a packet" active />
-            <div className="step-body">
-              <div className="manual-grid">
-                <div>
-                  <label className="field-label">Meeting URL</label>
-                  <input
-                    className="input"
-                    placeholder="https://iso-ne.com/event/markets-committee-june-2026"
-                  />
-                  <div className="muted text-xs" style={{ marginTop: 4 }}>
-                    Paste an ISO-NE event page, NYISO meeting URL, or a public
-                    agenda PDF link.
-                  </div>
-                </div>
-                <div className="row" style={{ gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <label className="field-label">Venue</label>
-                    <select className="select">
-                      <option>ISO-NE</option>
-                      <option>NYISO</option>
-                    </select>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label className="field-label">Committee</label>
-                    <select className="select">
-                      <option>Markets Committee (MC)</option>
-                      <option>NEPOOL Participants Committee (NPC)</option>
-                      <option>Reliability Committee (RC)</option>
-                    </select>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <label className="field-label">Date</label>
-                    <input
-                      className="input"
-                      type="date"
-                      defaultValue="2026-06-10"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="field-label">
-                    Or upload documents directly
-                  </label>
-                  <div className="dropzone">
-                    <div className="mono text-xs muted">
-                      drag PDFs / PPTX / DOCX here
-                    </div>
-                    <div style={{ marginTop: 8 }}>
-                      <button className="btn btn-sm">Browse files</button>
-                    </div>
-                  </div>
-                </div>
-                <div className="row" style={{ gap: 8 }}>
-                  <button className="btn">Cancel</button>
-                  <span style={{ flex: 1 }} />
-                  <button className="btn btn-accent">
-                    <Icon name="play" /> Ingest
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ManualAdd />
         )}
 
         <div className="section-h" style={{ marginTop: 48 }}>
@@ -454,6 +389,142 @@ export function Add() {
         <div style={{ height: 80 }} />
       </div>
     </>
+  );
+}
+
+function ManualAdd() {
+  const navigate = useNavigate();
+  const { data: config } = useQuery({
+    queryKey: ["app-config"],
+    queryFn: () => api.getConfig(),
+  });
+
+  const [url, setUrl] = useState("");
+  const [committee, setCommittee] = useState("");
+  const [result, setResult] = useState<{ ok: true; meetingId: number; reused: boolean } | null>(null);
+
+  const committees = (config?.committees ?? []).filter((c) => c.active);
+
+  const submit = useMutation({
+    mutationFn: () =>
+      api.ingestByUrl({
+        url: url.trim(),
+        committee_short: committee || undefined,
+      }),
+    onSuccess: (res) => {
+      setResult({ ok: true, meetingId: res.meeting_id, reused: res.already_existed });
+    },
+    onError: () => setResult(null),
+  });
+
+  return (
+    <div className="ingest-step">
+      <StepHead
+        n={1}
+        label="Manual add"
+        sub="Paste an ISO-NE event URL or event ID"
+        active
+      />
+      <div className="step-body">
+        <div className="manual-grid">
+          <div>
+            <label className="field-label">Meeting URL or event ID</label>
+            <input
+              className="input"
+              placeholder="https://iso-ne.com/event-details?eventId=215042"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              autoFocus
+            />
+            <div className="muted text-xs" style={{ marginTop: 4 }}>
+              Paste any ISO-NE event page or a bare numeric event ID. Dates,
+              location, and documents are detected automatically.
+            </div>
+          </div>
+
+          <div className="row" style={{ gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="field-label">Venue</label>
+              <select className="select" value="ISO-NE" disabled>
+                <option>ISO-NE</option>
+              </select>
+            </div>
+            <div style={{ flex: 2 }}>
+              <label className="field-label">
+                Committee (override — usually auto-detected)
+              </label>
+              <select
+                className="select"
+                value={committee}
+                onChange={(e) => setCommittee(e.target.value)}
+              >
+                <option value="">Auto-detect from page</option>
+                {committees.map((c) => (
+                  <option key={c.short} value={c.short}>
+                    {c.name} ({c.short})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {submit.error && (
+            <div
+              style={{
+                background: "rgba(196,99,58,0.08)",
+                border: "1px solid var(--accent-soft)",
+                color: "var(--accent)",
+                padding: "8px 10px",
+                borderRadius: "var(--radius)",
+                fontSize: 12.5,
+              }}
+            >
+              {(submit.error as Error).message}
+            </div>
+          )}
+
+          {result && (
+            <div
+              style={{
+                background: "var(--accent-tint)",
+                border: "1px solid var(--accent-soft)",
+                padding: "10px 12px",
+                borderRadius: "var(--radius)",
+              }}
+            >
+              <div className="text-sm">
+                {result.reused
+                  ? "Re-ingested existing meeting."
+                  : "Meeting ingested."}
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <button
+                  className="btn btn-sm btn-accent"
+                  onClick={() => navigate(`/meeting/${result.meetingId}`)}
+                >
+                  Open meeting <Icon name="arrow-r" size={12} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="row" style={{ gap: 8 }}>
+            <span style={{ flex: 1 }} />
+            <button
+              className="btn btn-accent"
+              disabled={!url.trim() || submit.isPending}
+              onClick={() => {
+                setResult(null);
+                submit.mutate();
+              }}
+            >
+              <Icon name="play" />{" "}
+              {submit.isPending ? "Ingesting…" : "Ingest"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

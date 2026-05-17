@@ -27,10 +27,14 @@ from .migrate import run_migrations
 from .routes import (
     admin,
     agenda_items,
+    auth,
     briefings,
+    config as config_route,
     documents,
     editor_images,
     ingest,
+    jobs,
+    manual_ingest,
     me,
     meetings,
     prompts,
@@ -53,6 +57,24 @@ async def lifespan(app: FastAPI):
             log.info("no pending migrations")
     except Exception as e:
         log.exception("migration failure: %s", e)
+
+    # Reap any summarize jobs that were running when the previous process
+    # died (we have no way to resume them, so mark them failed).
+    try:
+        from pipeline import db_new as _db
+        with _db._conn() as _conn:
+            with _db._cursor(_conn) as _cur:
+                _cur.execute(
+                    """UPDATE summarize_jobs
+                          SET status = 'failed',
+                              error = COALESCE(error, 'server restarted mid-run'),
+                              finished_at = NOW()
+                        WHERE status IN ('queued', 'running')"""
+                )
+                if _cur.rowcount:
+                    log.info("reaped %d stale summarize_jobs row(s)", _cur.rowcount)
+    except Exception as e:
+        log.warning("could not reap stale summarize_jobs: %s", e)
 
     # Cron scheduler (set POOLSIDE_SCHEDULER=off to disable).
     try:
@@ -81,6 +103,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(me.router)
 app.include_router(meetings.router)
 app.include_router(briefings.router)
@@ -92,6 +115,9 @@ app.include_router(summaries.router)
 app.include_router(editor_images.router)
 app.include_router(ingest.router)
 app.include_router(admin.router)
+app.include_router(config_route.router)
+app.include_router(manual_ingest.router)
+app.include_router(jobs.router)
 
 
 @app.get("/api/health")

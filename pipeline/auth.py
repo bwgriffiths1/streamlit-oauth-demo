@@ -12,8 +12,6 @@ import hmac
 import time
 
 import bcrypt
-import streamlit as st
-import streamlit.components.v1 as components
 
 from pipeline.db_new import _conn, _cursor
 
@@ -25,6 +23,7 @@ _MAX_AGE = 7 * 24 * 3600  # 1 week
 
 
 def _cookie_secret() -> str:
+    import streamlit as st  # local import; keep this module importable from FastAPI
     return st.secrets.get("auth", {}).get("cookie_secret", "fallback-secret")
 
 
@@ -57,6 +56,7 @@ def _verify_session_cookie(raw: str) -> str | None:
 
 def _set_cookie(name: str, value: str, max_age: int) -> None:
     """Inject a tiny JS snippet to set a browser cookie."""
+    import streamlit.components.v1 as components  # local import
     components.html(
         f"""<script>
         document.cookie = "{name}={value}; path=/; max-age={max_age}; SameSite=Lax";
@@ -73,6 +73,7 @@ def restore_local_session() -> bool:
     """Check for a valid session cookie and restore session state.
     Call early in app.py before is_authenticated().
     Returns True if a session was restored."""
+    import streamlit as st
     if st.session_state.get("local_authenticated"):
         return True
     raw = st.context.cookies.get(_SESSION_COOKIE)
@@ -167,6 +168,7 @@ def authenticate_user(email: str, password: str) -> dict | None:
 
 def is_authenticated() -> bool:
     """True if logged in via Google OIDC or local DB."""
+    import streamlit as st
     if st.user.is_logged_in:
         return True
     return st.session_state.get("local_authenticated", False)
@@ -174,6 +176,7 @@ def is_authenticated() -> bool:
 
 def get_current_user() -> dict:
     """Return {name, email, provider} for the authenticated user."""
+    import streamlit as st
     if st.user.is_logged_in:
         return {
             "name": st.user.get("name", "User"),
@@ -189,6 +192,7 @@ def get_current_user() -> dict:
 
 def login_local_user(user: dict) -> None:
     """Set session state and persistent cookie after successful local auth."""
+    import streamlit as st
     st.session_state["local_authenticated"] = True
     st.session_state["user_name"] = user["name"]
     st.session_state["user_email"] = user["email"]
@@ -197,6 +201,7 @@ def login_local_user(user: dict) -> None:
 
 def logout_local_user() -> None:
     """Clear local auth session state and cookie."""
+    import streamlit as st
     for key in ("local_authenticated", "user_name", "user_email"):
         st.session_state.pop(key, None)
     _clear_cookie(_SESSION_COOKIE)

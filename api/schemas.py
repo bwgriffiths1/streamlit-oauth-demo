@@ -34,6 +34,7 @@ class MeetingListItem(BaseModel):
     last_scraped_at: Optional[str] = None
     agenda_parsed_at: Optional[str] = None
     doc_count: int
+    unassigned_doc_count: int = 0
     item_count: int
     tags: list[str]
 

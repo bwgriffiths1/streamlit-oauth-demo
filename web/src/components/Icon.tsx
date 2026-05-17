@@ -25,6 +25,7 @@ import {
   Users,
   Circle,
   Globe,
+  LogOut,
 } from "lucide-react";
 
 const REGISTRY = {
@@ -54,6 +55,7 @@ const REGISTRY = {
   users: Users,
   dot: Circle,
   globe: Globe,
+  logout: LogOut,
 } as const;
 
 export type IconName = keyof typeof REGISTRY;

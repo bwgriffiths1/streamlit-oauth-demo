@@ -5,7 +5,6 @@ import { Topbar } from "../components/Topbar";
 import { Pill } from "../components/Pill";
 import { Tag, VenueTag, TypeTag } from "../components/Tag";
 import { Icon } from "../components/Icon";
-import { Segmented } from "../components/Segmented";
 import { api } from "../lib/api";
 import { fmtDateRange, extFromFilename } from "../lib/format";
 import { Markdown } from "../lib/markdown";
@@ -72,12 +71,27 @@ function DocRow({
           itemId={itemId}
           agenda={agenda}
         />
-        <button className="btn btn-sm btn-ghost" title="Open">
-          <Icon name="external" size={12} />
-        </button>
-        <button className="btn btn-sm btn-ghost" title="Download">
-          <Icon name="download" size={12} />
-        </button>
+        {doc.source_url && (
+          <>
+            <a
+              className="btn btn-sm btn-ghost"
+              title="Open source"
+              href={doc.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Icon name="external" size={12} />
+            </a>
+            <a
+              className="btn btn-sm btn-ghost"
+              title="Download"
+              href={doc.source_url}
+              download={doc.filename}
+            >
+              <Icon name="download" size={12} />
+            </a>
+          </>
+        )}
       </div>
     </div>
   );
@@ -418,11 +432,105 @@ export function Meeting() {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set([3]));
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showSummaryRunner, setShowSummaryRunner] = useState(false);
-  const [briefingStyle, setBriefingStyle] = useState<"standard" | "detailed">(
-    "standard"
-  );
-  const [extractImages, setExtractImages] = useState(false);
-  const [forceRerun, setForceRerun] = useState(false);
+  // TODO: meeting-level summarize options (briefing style, extract images,
+  // force re-run) are not honored by the backend yet — see the parity plan.
+  // Per-item re-runs work via AgendaRow's "Re-run" button.
+
+  const qcRefresh = useQueryClient();
+  const refreshMeeting = useMutation({
+    mutationFn: () => api.refreshMeeting(meetingId),
+    onSuccess: () => {
+      qcRefresh.invalidateQueries({ queryKey: ["meeting", meetingId] });
+      qcRefresh.invalidateQueries({ queryKey: ["meeting-docs", meetingId] });
+    },
+    onError: (e: Error) => alert(`Refresh failed: ${e.message}`),
+  });
+
+  // Estimate fetched lazily when the modal opens.
+  const estimate = useQuery({
+    queryKey: ["summarize-estimate", meetingId],
+    queryFn: () => api.estimateSummarize(meetingId),
+    enabled: showSummaryRunner,
+    staleTime: 60_000,
+  });
+
+  // Active job poller — also wired up when an in-flight job is discovered
+  // via getActiveJob on mount.
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  const [completedAlerted, setCompletedAlerted] = useState<Set<number>>(new Set());
+
+  // Recover any in-flight job for this meeting on mount.
+  useEffect(() => {
+    let cancelled = false;
+    api.getActiveJob(meetingId).then((j) => {
+      if (!cancelled && j && (j.status === "queued" || j.status === "running")) {
+        setActiveJobId(j.id);
+      }
+    }).catch(() => { /* no-op */ });
+    return () => { cancelled = true; };
+  }, [meetingId]);
+
+  const activeJob = useQuery({
+    queryKey: ["job", activeJobId],
+    queryFn: () => api.getJob(activeJobId as number),
+    enabled: activeJobId != null,
+    refetchInterval: (q) => {
+      const data = q.state.data as
+        | { status?: string }
+        | undefined;
+      if (!data) return 3000;
+      return data.status === "complete" || data.status === "failed" ? false : 3000;
+    },
+  });
+
+  // When the polled job hits a terminal state, refresh data + toast once.
+  useEffect(() => {
+    const j = activeJob.data;
+    if (!j || activeJobId == null) return;
+    if (j.status !== "complete" && j.status !== "failed") return;
+    if (completedAlerted.has(j.id)) return;
+    setCompletedAlerted((s) => new Set([...s, j.id]));
+    qcRefresh.invalidateQueries({ queryKey: ["meeting", meetingId] });
+    qcRefresh.invalidateQueries({ queryKey: ["briefing", meetingId] });
+    qcRefresh.invalidateQueries({ queryKey: ["meeting-docs", meetingId] });
+    qcRefresh.invalidateQueries({ queryKey: ["meetings"] });
+    if (j.status === "complete") {
+      alert(
+        `Summarization complete.\n` +
+          `Actual cost $${j.cost_usd.toFixed(4)}.\n` +
+          `Input tokens: ${j.input_tokens.toLocaleString()}\n` +
+          `Output tokens: ${j.output_tokens.toLocaleString()}`,
+      );
+    }
+  }, [activeJob.data, activeJobId, completedAlerted, qcRefresh, meetingId]);
+
+  const startSummarize = useMutation({
+    mutationFn: () => api.startSummarize(meetingId),
+    onSuccess: (res) => {
+      setShowSummaryRunner(false);
+      setActiveJobId(res.job_id);
+    },
+    onError: (e: Error) => alert(`Could not start summarize: ${e.message}`),
+  });
+
+  const cleanupZips = useMutation({
+    mutationFn: () => api.cleanupZipExpansion(meetingId),
+    onSuccess: (res) => {
+      qcRefresh.invalidateQueries({ queryKey: ["meeting", meetingId] });
+      qcRefresh.invalidateQueries({ queryKey: ["meeting-docs", meetingId] });
+      qcRefresh.invalidateQueries({ queryKey: ["meetings"] });
+      if (res.deleted_children === 0 && res.un_ignored_zips === 0) {
+        alert("Nothing to clean up — this meeting wasn't pre-expanded.");
+      } else {
+        alert(
+          `Removed ${res.deleted_children} expanded child row(s); ` +
+            `restored ${res.un_ignored_zips} zip(s). ` +
+            `Zips are now handled inline at summarize time.`,
+        );
+      }
+    },
+    onError: (e: Error) => alert(`Cleanup failed: ${e.message}`),
+  });
 
   const toggle = (itemId: number) =>
     setExpandedIds((prev) => {
@@ -473,6 +581,15 @@ export function Meeting() {
               onClick={() => navigate(`/briefing/${m.id}`)}
             >
               <Icon name="book" /> Open briefing
+            </button>
+            <button
+              className="btn btn-sm"
+              onClick={() => cleanupZips.mutate()}
+              disabled={cleanupZips.isPending}
+              title="Undo a prior Expand zips run — zips are now handled inline at summarize time."
+            >
+              <Icon name="refresh" />{" "}
+              {cleanupZips.isPending ? "Cleaning…" : "Reset zip rows"}
             </button>
             <button
               className="btn btn-sm btn-primary"
@@ -540,9 +657,6 @@ export function Meeting() {
             {m.tags.map((t) => (
               <Tag key={t}>{t}</Tag>
             ))}
-            <button className="btn btn-sm btn-ghost">
-              <Icon name="plus" size={11} />
-            </button>
           </div>
         )}
 
@@ -612,52 +726,126 @@ export function Meeting() {
           </div>
         )}
 
+        {activeJob.data &&
+          (activeJob.data.status === "running" ||
+            activeJob.data.status === "queued" ||
+            (activeJob.data.status === "failed" && activeJobId === activeJob.data.id)) && (
+            <div
+              className={`summary-banner ${
+                activeJob.data.status === "failed" ? "is-error" : ""
+              }`}
+            >
+              <div className="summary-banner-main">
+                <div className="summary-banner-title">
+                  {activeJob.data.status === "running" && "Summarizing meeting…"}
+                  {activeJob.data.status === "queued" && "Queued…"}
+                  {activeJob.data.status === "failed" && "Summarization failed"}
+                </div>
+                <div className="summary-banner-sub">
+                  {activeJob.data.status === "failed"
+                    ? activeJob.data.error || "Unknown error."
+                    : activeJob.data.progress_text || "Working…"}
+                </div>
+              </div>
+              {activeJob.data.status === "failed" && (
+                <button
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => setActiveJobId(null)}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          )}
+
         {showSummaryRunner && (
           <div className="summary-runner">
             <div className="row" style={{ marginBottom: 14 }}>
               <h3 style={{ margin: 0, fontSize: 14 }}>
-                Re-summarize this meeting
+                Summarize this meeting
               </h3>
               <span style={{ flex: 1 }} />
               <button
                 className="btn btn-sm btn-ghost"
                 onClick={() => setShowSummaryRunner(false)}
+                disabled={startSummarize.isPending || refreshMeeting.isPending}
               >
                 <Icon name="x" size={12} />
               </button>
             </div>
-            <div className="row" style={{ gap: 16, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 200 }}>
-                <label className="field-label">Briefing style</label>
-                <Segmented
-                  value={briefingStyle}
-                  onChange={setBriefingStyle}
-                  options={[
-                    { value: "standard", label: "Standard" },
-                    { value: "detailed", label: "Detailed" },
-                  ]}
-                />
-              </div>
-              <label className="row" style={{ gap: 6, alignItems: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={extractImages}
-                  onChange={(e) => setExtractImages(e.target.checked)}
-                />
-                <span className="text-sm">Extract images & charts</span>
-              </label>
-              <label className="row" style={{ gap: 6, alignItems: "center" }}>
-                <input
-                  type="checkbox"
-                  checked={forceRerun}
-                  onChange={(e) => setForceRerun(e.target.checked)}
-                />
-                <span className="text-sm">Force re-run all levels</span>
-              </label>
+            <div
+              className="text-sm muted"
+              style={{ marginBottom: 14, lineHeight: 1.5 }}
+            >
+              Runs the full three-level pipeline: summarize each document, roll
+              up per agenda item, then write the meeting briefing. The job runs
+              in the background — you can close this modal and come back.
+            </div>
+
+            <div
+              style={{
+                background: "var(--bg-sunk)",
+                border: "1px solid var(--border-soft)",
+                borderRadius: "var(--radius)",
+                padding: "10px 12px",
+                marginBottom: 14,
+              }}
+            >
+              {estimate.isLoading && (
+                <div className="text-sm muted">Loading estimate…</div>
+              )}
+              {estimate.isError && (
+                <div className="text-sm" style={{ color: "var(--accent)" }}>
+                  Couldn't load estimate: {(estimate.error as Error).message}
+                </div>
+              )}
+              {estimate.data && (
+                <>
+                  <div style={{ fontSize: 14 }}>
+                    <span className="muted">Est. cost </span>
+                    <strong>
+                      ≈ ${estimate.data.estimated_cost_usd.toFixed(4)}
+                    </strong>
+                  </div>
+                  <div className="muted text-xs" style={{ marginTop: 4 }}>
+                    ~{estimate.data.estimated_input_tokens.toLocaleString()} input
+                    tokens · ~
+                    {estimate.data.estimated_output_tokens.toLocaleString()}{" "}
+                    output tokens · {estimate.data.items_planned} LLM call(s)
+                  </div>
+                  {estimate.data.docs_without_text > 0 && (
+                    <div className="muted text-xs" style={{ marginTop: 4 }}>
+                      Note: {estimate.data.docs_without_text} document(s)
+                      haven't been text-extracted yet, so the estimate is rough
+                      — actuals may differ.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <button
+                className="btn btn-sm"
+                disabled={refreshMeeting.isPending || startSummarize.isPending}
+                onClick={() => refreshMeeting.mutate()}
+                title="Pull latest documents and re-parse the agenda; does NOT call the LLM."
+              >
+                <Icon name="refresh" size={11} />{" "}
+                {refreshMeeting.isPending
+                  ? "Refreshing…"
+                  : "Refresh materials only"}
+              </button>
               <span style={{ flex: 1 }} />
-              <span className="text-xs muted">Est. cost: ~$2.40 · ~3 min</span>
-              <button className="btn btn-sm btn-accent">
-                <Icon name="play" size={11} /> Run
+              <button
+                className="btn btn-sm btn-accent"
+                disabled={startSummarize.isPending || refreshMeeting.isPending}
+                onClick={() => startSummarize.mutate()}
+              >
+                <Icon name="spark" size={11} />{" "}
+                {startSummarize.isPending
+                  ? "Starting…"
+                  : "Run summarization"}
               </button>
             </div>
           </div>
@@ -824,7 +1012,7 @@ function AgendaEmpty({
       </div>
       <div className="muted text-sm" style={{ marginBottom: 12 }}>
         {rel
-          ? `Last checked ${rel}. ISO-NE / NYISO typically post agendas about a week before the meeting.`
+          ? `Last checked ${rel}. ISO-NE typically posts agendas about a week before the meeting.`
           : "This meeting hasn't been scraped for materials yet."}
       </div>
       <button
