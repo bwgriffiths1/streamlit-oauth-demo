@@ -1,0 +1,283 @@
+/* Lush, full-page markdown editor */
+
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--pad-5) var(--pad-6) 0;
+  min-height: calc(100vh - var(--header-h));
+}
+
+.editor-header {
+  padding-bottom: var(--pad-4);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--pad-4);
+}
+.editor-title {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 30px;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+  margin: 6px 0 0 0;
+  color: var(--ink);
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────────── */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  position: sticky;
+  top: calc(var(--header-h) + 8px);
+  z-index: 5;
+  flex-wrap: wrap;
+}
+.editor-toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-right: 1px solid var(--border-soft);
+}
+.editor-toolbar-group:last-child {
+  border-right: 0;
+}
+.editor-toolbar-btn {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 80ms;
+  white-space: nowrap;
+}
+.editor-toolbar-btn:hover {
+  background: var(--bg-sunk);
+  color: var(--ink);
+}
+
+/* Callout submenu */
+.editor-callout-menu {
+  position: relative;
+}
+.editor-callout-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  z-index: 10;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  box-shadow: 0 10px 24px -16px rgba(0, 0, 0, 0.2);
+}
+.editor-callout-dropdown button {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--ink);
+  font-family: inherit;
+}
+.editor-callout-dropdown button:hover {
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+/* ── Split pane ───────────────────────────────────────────────────────── */
+.editor-pane {
+  display: grid;
+  gap: var(--pad-4);
+  flex: 1;
+  margin-top: var(--pad-3);
+  min-height: 0;
+}
+.editor-pane.editor-split {
+  grid-template-columns: 1fr 1fr;
+}
+.editor-pane.editor-source {
+  grid-template-columns: 1fr;
+}
+.editor-pane.editor-preview {
+  grid-template-columns: 1fr;
+}
+
+.editor-textarea {
+  width: 100%;
+  min-height: calc(100vh - 360px);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--pad-5) var(--pad-6);
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  resize: none;
+  white-space: pre-wrap;
+  word-break: normal;
+  tab-size: 2;
+}
+.editor-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.editor-textarea::placeholder {
+  color: var(--muted-soft);
+  font-style: italic;
+}
+
+/* ── Preview pane ─────────────────────────────────────────────────────── */
+.editor-preview {
+  padding: var(--pad-5) var(--pad-6);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-y: auto;
+  min-height: calc(100vh - 360px);
+}
+.editor-preview-body {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--ink-soft);
+  max-width: 65ch;
+}
+.editor-preview-body p {
+  margin: 0 0 14px 0;
+}
+.editor-preview-body h3 {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 24px 0 6px 0;
+}
+.editor-preview-body h4 {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 18px 0 4px 0;
+}
+.editor-preview-body strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.editor-preview-body em {
+  font-style: italic;
+}
+.editor-preview-body code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--bg-sunk);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.editor-preview-body ul,
+.editor-preview-body ol {
+  margin: 0 0 14px 0;
+  padding-left: 24px;
+}
+.editor-preview-body li {
+  margin: 4px 0;
+}
+.editor-preview-body hr {
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  margin: 18px 0;
+}
+.editor-preview-body .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  margin: 14px 0;
+}
+.editor-preview-body .md-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+.editor-preview-body .md-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.editor-preview-body .md-table td:first-child {
+  font-weight: 500;
+}
+
+/* Inline / block images rendered by Markdown */
+.md-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 14px 0;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elev);
+}
+
+/* Callout block (used in editor preview AND wherever Markdown is rendered) */
+.md-callout {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 16px;
+  align-items: baseline;
+  margin: 16px 0;
+  padding: 14px 18px;
+  background: var(--accent-tint);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--accent);
+}
+.md-callout-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  font-weight: 600;
+}
+.md-callout-body {
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  font-style: italic;
+}
+
+/* ── Status bar ───────────────────────────────────────────────────────── */
+.editor-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--border-soft);
+  margin-top: 12px;
+}

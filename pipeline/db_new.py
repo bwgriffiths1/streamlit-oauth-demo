@@ -227,10 +227,22 @@ def list_meetings_overview(
                     m.location,
                     m.external_id,
                     m.status                AS meeting_status,
+                    COALESCE(m.lifecycle_status, 'discovered') AS lifecycle_status,
+                    m.agenda_doc_hash,
+                    m.agenda_parsed_at,
+                    m.last_scraped_at,
                     mt.short_name           AS type_short,
                     mt.name                 AS type_name,
                     v.short_name            AS venue_short,
                     COUNT(DISTINCT d.id)    AS doc_count,
+                    COUNT(DISTINCT CASE
+                        WHEN d.ignored = false
+                         AND NOT EXISTS (
+                             SELECT 1 FROM item_documents idoc
+                             WHERE idoc.document_id = d.id
+                         )
+                        THEN d.id END)      AS unassigned_doc_count,
+                    COUNT(DISTINCT ai.id)   AS item_count,
                     COALESCE(MAX(CASE
                         WHEN sv.status IN ('draft','approved') AND sv.is_manual = false
                         THEN 1 ELSE 0 END), 0) AS has_summary,
@@ -242,6 +254,8 @@ def list_meetings_overview(
                 JOIN venues v         ON v.id  = mt.venue_id
                 LEFT JOIN documents d
                        ON d.meeting_id = m.id
+                LEFT JOIN agenda_items ai
+                       ON ai.meeting_id = m.id
                 LEFT JOIN summary_versions sv
                        ON sv.entity_type = 'meeting'
                       AND sv.entity_id   = m.id
@@ -254,7 +268,9 @@ def list_meetings_overview(
                 sql += " AND v.short_name = %s"
                 params.append(venue_short)
             sql += """
-                GROUP BY m.id, mt.short_name, mt.name, v.short_name
+                GROUP BY m.id, mt.short_name, mt.name, v.short_name,
+                         m.lifecycle_status, m.agenda_doc_hash,
+                         m.agenda_parsed_at, m.last_scraped_at
                 ORDER BY m.meeting_date ASC
             """
             cur.execute(sql, params)
@@ -385,10 +401,11 @@ def get_max_seq(meeting_id: int) -> int:
     with _conn() as conn:
         with _cursor(conn) as cur:
             cur.execute(
-                "SELECT COALESCE(MAX(seq), 0) FROM agenda_items WHERE meeting_id = %s",
+                "SELECT COALESCE(MAX(seq), 0) AS max_seq FROM agenda_items WHERE meeting_id = %s",
                 (meeting_id,),
             )
-            return cur.fetchone()[0]
+            row = cur.fetchone()
+            return row["max_seq"] if row else 0
 
 
 def save_manual_summary(entity_type: str, entity_id: int,

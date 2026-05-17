@@ -332,7 +332,7 @@ if agenda_items:
 
         # -- Run handlers ----------------------------------------------------
         def _run_summarization(
-            force: bool, images: bool, style: str,
+            force: bool, images: bool,
             level: int = 1, item_ids: set[int] | None = None,
             label: str = "Running summarization…",
         ):
@@ -351,7 +351,6 @@ if agenda_items:
                         force_rerun=force,
                         start_level=level,
                         extract_images=images if images else None,
-                        briefing_style=style,
                         item_ids=item_ids,
                     )
                     n1, n2, n3 = results["level1"], results["level2"], results["level3"]
@@ -376,18 +375,18 @@ if agenda_items:
 
         if run_btn:
             _run_summarization(
-                force=force_rerun, images=do_images, style=briefing_style,
+                force=force_rerun, images=do_images,
                 level=start_level if selected_item_ids is None else 1,
                 item_ids=selected_item_ids,
             )
         elif rerun_brief_btn:
             _run_summarization(
-                force=True, images=False, style=briefing_style,
+                force=True, images=False,
                 level=3, label="Regenerating briefing…",
             )
         elif new_items_btn and unsummarized_ids:
             _run_summarization(
-                force=False, images=do_images, style=briefing_style,
+                force=False, images=do_images,
                 item_ids=unsummarized_ids, label="Summarizing new items…",
             )
 
